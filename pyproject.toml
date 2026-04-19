@@ -17,6 +17,7 @@ dependencies = [
 
 [project.scripts]
 payment-router = "payment_router.cli:app"
+remit = "payment_router.cli:app"
 
 [dependency-groups]
 dev = [
