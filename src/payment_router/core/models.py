@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from decimal import Decimal
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
+
+if TYPE_CHECKING:
+    from payment_router.router import RoutingPreference
 
 
 class DataSource(StrEnum):
@@ -36,6 +40,7 @@ class Route(_FrozenModel):
     target_currency: str
     source_amount: Decimal = Field(gt=0)
     final_amount: Decimal = Field(ge=0)
+    routing_preference: "RoutingPreference | None" = None
 
 
 class NetworkQuote(_FrozenModel):
