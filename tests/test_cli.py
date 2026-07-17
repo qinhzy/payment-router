@@ -115,6 +115,20 @@ def test_route_command_top_n_outputs_comparison_table(monkeypatch) -> None:
     assert result.output.count("flowchart LR") == 3
 
 
+def test_decide_command_outputs_all_profiles_and_tradeoff(monkeypatch) -> None:
+    monkeypatch.setattr("payment_router.cli._instantiate_networks", _stub_networks)
+
+    result = runner.invoke(app, ["decide", "USD", "CNY", "100"])
+
+    assert result.exit_code == 0
+    assert "Decision Board" in result.output
+    assert "Cheapest" in result.output
+    assert "Fastest" in result.output
+    assert "Balanced" in result.output
+    assert "Decision note" in result.output
+    assert "VERIFIED" in result.output
+
+
 def test_route_command_rejects_unsupported_currency(monkeypatch) -> None:
     monkeypatch.setattr("payment_router.cli._instantiate_networks", _stub_networks)
 

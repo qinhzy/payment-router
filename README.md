@@ -57,6 +57,7 @@ flowchart LR
 - Models three payment networks: Wise via the public guest quote API, SEPA as a rules engine, and SWIFT as a correspondent-bank simulator.
 - Uses multi-objective Dijkstra routing with adjustable `cost_weight` and `time_weight`, ranking all-in cost (fees plus FX spread) against time.
 - Enumerates top-N candidate routes with `shortest_simple_paths` for side-by-side comparison.
+- Provides a `decide` terminal decision board that evaluates cheapest, fastest, and balanced profiles against the same graph and explains the balanced trade-off.
 - Generates Mermaid flowcharts that can be pasted directly into GitHub or Notion.
 - Attaches a `DataSource` label to every quote so data provenance remains explicit.
 - Uses banker's rounding (`ROUND_HALF_EVEN`) for shared FX normalization, matching standard financial rounding practice.
@@ -73,6 +74,8 @@ uv sync --dev
 uv run remit route USD CNY 100
 uv run remit route GBP EUR 500 --prefer=cheapest
 uv run remit route USD CNY 10000 --top-n=3
+uv run remit decide USD CNY 1000
+uv run remit decide USD CNY 1000 --show-diagrams
 uv run remit networks
 ```
 
@@ -93,6 +96,7 @@ src/payment_router/
 |   |-- fx.py          # unified mid-rate source
 |   `-- graph.py       # PaymentGraph (networkx MultiDiGraph)
 |-- router.py          # multi-objective Dijkstra routing
+|-- decision.py        # multi-profile decision board and trade-off explanation
 |-- visualizer.py      # Mermaid + Markdown table generation
 `-- cli.py             # Typer CLI with Rich output
 ```
@@ -121,7 +125,7 @@ No quote is synthesized without disclosure.
 - **v0.3**: Integrate Frankfurter live FX rates so route ranking can use current market references.
 - **v0.4**: Add a historical volatility overlay to compare route quality under changing FX conditions.
 - **v0.5**: Introduce a CIPS network model for RMB-focused corridor analysis.
-- **v0.6**: Add a web UI with FastAPI and HTMX for interactive exploration and sharing.
+- **v0.6**: Add terminal what-if sensitivity analysis without turning the simulator into an online payment service.
 
 ## Tech stack
 
