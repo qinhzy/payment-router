@@ -92,7 +92,10 @@ class WiseNetwork(PaymentNetwork):
 
         try:
             selected_option = self._select_payment_option(response_json)
-            fee_total = self._decimal_from_mapping(selected_option.get("fee"), "total")
+            fee_total_source = self._decimal_from_mapping(
+                selected_option.get("fee"),
+                "total",
+            )
             fx_rate = self._decimal_from_mapping(response_json, "rate")
             time_hours = self._extract_time_hours(response_json, selected_option)
         except (InvalidOperation, KeyError, TypeError, ValueError) as exc:
@@ -100,7 +103,7 @@ class WiseNetwork(PaymentNetwork):
 
         return NetworkQuote(
             network_name="wise",
-            fee_usd=fee_total,
+            fee_usd=fx.to_usd(fee_total_source, source_currency),
             time_hours=time_hours,
             fx_rate=fx_rate,
             data_source=DataSource.VERIFIED,

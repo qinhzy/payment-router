@@ -33,7 +33,7 @@ $ uv run remit route USD CNY 100
 +-----------------------------------------------------------------------------+
 ```
 
-The router discovered that a two-hop Wise path (`USD -> GBP -> CNY`) is about 6x cheaper than direct SWIFT for this amount; that is not a hardcoded rule, but the natural result of graph construction plus Dijkstra-based search.
+The router can select a direct or multi-hop path based on normalized all-in cost and time. The sample is illustrative: live Wise quotes can change, while simulated networks remain explicitly source-labeled.
 
 ### Rendered route diagram
 
@@ -55,12 +55,12 @@ flowchart LR
 ## Features
 
 - Models three payment networks: Wise via the public guest quote API, SEPA as a rules engine, and SWIFT as a correspondent-bank simulator.
-- Uses multi-objective Dijkstra routing with adjustable `cost_weight` and `time_weight`, with normalization so fee and time stay comparable.
+- Uses multi-objective Dijkstra routing with adjustable `cost_weight` and `time_weight`, ranking all-in cost (fees plus FX spread) against time.
 - Enumerates top-N candidate routes with `shortest_simple_paths` for side-by-side comparison.
 - Generates Mermaid flowcharts that can be pasted directly into GitHub or Notion.
 - Attaches a `DataSource` label to every quote so data provenance remains explicit.
 - Uses banker's rounding (`ROUND_HALF_EVEN`) for shared FX normalization, matching standard financial rounding practice.
-- Ships with 63 passing tests: Wise 5, SEPA 6, SWIFT 8, graph 8, FX 7, router 13, CLI 6, visualizer 5, plus models 3 and base 2.
+- Validates graph construction, fee currency conversion, all-in route ranking, CLI behavior, and every network model with an automated test suite.
 
 ## Quick start
 
@@ -112,13 +112,14 @@ No quote is synthesized without disclosure.
 - **Wise multi-hop time estimation**: In multi-hop Wise routes, the second hop and beyond can show `time_hours = 0` because the Wise API returns delivery timing relative to an already funded balance. The current implementation can therefore slightly underestimate total multi-hop Wise time. Future fix plan: add an independent time estimation layer under `core/` in v2.
 - **Four supported currencies**: The current MVP only supports `USD`, `EUR`, `GBP`, and `CNY`. Adding a new currency is mechanically small in `core/fx.py`, but every new corridor still needs verified source coverage. Future fix plan: expand the currency set only alongside source-backed corridor validation.
 - **Static FX mid-rates**: The mid-rates in `core/fx.py` are manually checked and then frozen for repeatable simulation. That is acceptable for ranking paths, but not for production pricing. Future fix plan: plug in a live FX provider such as Frankfurter or ECB reference rates.
+- **Quote sizing approximation**: Each corridor is quoted at the market-equivalent value of the source amount. Fees and FX are then applied hop by hop to the final amount, but a later live quote can still differ slightly because the exact amount arriving at that hop is path-dependent.
 
 ## Roadmap
 
-- **v0.2**: Integrate Frankfurter live FX rates so route ranking can use current market references.
-- **v0.3**: Add a historical volatility overlay to compare route quality under changing FX conditions.
-- **v0.4**: Introduce a CIPS network model for RMB-focused corridor analysis.
-- **v0.5**: Add a web UI with FastAPI and HTMX for interactive exploration and sharing.
+- **v0.3**: Integrate Frankfurter live FX rates so route ranking can use current market references.
+- **v0.4**: Add a historical volatility overlay to compare route quality under changing FX conditions.
+- **v0.5**: Introduce a CIPS network model for RMB-focused corridor analysis.
+- **v0.6**: Add a web UI with FastAPI and HTMX for interactive exploration and sharing.
 
 ## Tech stack
 

@@ -6,6 +6,7 @@ from time import perf_counter
 
 import pytest
 
+from payment_router.core import fx
 from payment_router.core.graph import NetworkEdge, PaymentGraph
 from payment_router.core.models import DataSource, NetworkQuote
 from payment_router.networks.base import PaymentNetwork
@@ -163,11 +164,76 @@ async def test_provider_exceptions_are_recorded_without_stopping_build() -> None
     await graph.build()
 
     assert graph.edge_count() == 1
-    assert len(graph._build_errors) == 1
-    network_name, from_currency, to_currency, error = graph._build_errors[0]
+    assert len(graph.build_errors) == 1
+    network_name, from_currency, to_currency, error = graph.build_errors[0]
     assert network_name == "faulty"
     assert (from_currency, to_currency) == ("USD", "CNY")
     assert isinstance(error, RuntimeError)
+
+
+async def test_currency_normalization_deduplicates_after_case_folding() -> None:
+    graph = PaymentGraph(
+        networks=[],
+        currencies=["usd", " USD ", "EUR", "eur"],
+        amount=Decimal("100"),
+    )
+
+    await graph.build()
+
+    assert graph.all_nodes() == {"USD", "EUR"}
+
+
+def test_constructor_rejects_unsupported_currencies() -> None:
+    with pytest.raises(fx.UnsupportedCurrencyError, match="JPY"):
+        PaymentGraph(
+            networks=[],
+            currencies=["USD", "JPY"],
+            amount=Decimal("100"),
+        )
+
+
+def test_constructor_rejects_non_finite_amount() -> None:
+    with pytest.raises(ValueError, match="finite"):
+        PaymentGraph(
+            networks=[],
+            currencies=["USD", "EUR"],
+            amount=Decimal("NaN"),
+        )
+
+
+async def test_quotes_use_source_equivalent_amount_for_each_currency() -> None:
+    network = FakeNetwork("amounts", {"USD", "GBP"}, {})
+    graph = PaymentGraph(
+        networks=[network],
+        currencies=["USD", "GBP"],
+        amount=Decimal("127"),
+        amount_currency="USD",
+    )
+
+    await graph.build()
+
+    assert ("USD", "GBP", Decimal("127")) in network.calls
+    assert ("GBP", "USD", Decimal("100.0")) in network.calls
+
+
+async def test_parallel_edges_with_duplicate_quote_names_are_preserved() -> None:
+    networks = [
+        FakeNetwork(
+            f"provider-{index}",
+            {"USD", "CNY"},
+            {("USD", "CNY"): _quote("shared-name", str(index), "1")},
+        )
+        for index in (1, 2)
+    ]
+    graph = PaymentGraph(
+        networks=networks,
+        currencies=["USD", "CNY"],
+        amount=Decimal("100"),
+    )
+
+    await graph.build()
+
+    assert len(graph.get_edges("USD", "CNY")) == 2
 
 
 async def test_same_currency_self_loops_are_skipped() -> None:

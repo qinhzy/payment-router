@@ -139,4 +139,13 @@ def test_version_option_prints_project_version() -> None:
     result = runner.invoke(app, ["--version"])
 
     assert result.exit_code == 0
-    assert "0.1.0" in result.output
+    assert "0.2.0" in result.output
+
+
+def test_route_command_rejects_non_finite_amount(monkeypatch) -> None:
+    monkeypatch.setattr("payment_router.cli._instantiate_networks", _stub_networks)
+
+    result = runner.invoke(app, ["route", "USD", "CNY", "NaN"])
+
+    assert result.exit_code != 0
+    assert "valid decimal number" in result.output

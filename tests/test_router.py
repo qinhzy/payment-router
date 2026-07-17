@@ -275,7 +275,7 @@ async def test_two_hop_route_is_found_when_no_direct_path_exists() -> None:
     assert route.total_time_hours == Decimal("5")
 
 
-async def test_find_all_routes_returns_top_n_sorted_by_weight() -> None:
+async def test_find_all_routes_returns_top_n_sorted_by_all_in_cost() -> None:
     router = await _build_router(
         networks=[
             FakeNetwork(
@@ -317,12 +317,21 @@ async def test_find_all_routes_returns_top_n_sorted_by_weight() -> None:
     )
 
     assert len(routes) == 3
-    assert [route.total_fee_usd for route in routes] == [Decimal("6"), Decimal("8"), Decimal("10")]
+    assert [route.total_fee_usd for route in routes] == [Decimal("10"), Decimal("8"), Decimal("6")]
 
 
 def test_zero_total_weight_preference_is_rejected() -> None:
     with pytest.raises(ValueError):
         RoutingPreference(cost_weight=0.0, time_weight=0.0)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("cost_weight", -0.1), ("time_weight", -0.1), ("max_hops", 0)],
+)
+def test_invalid_preference_values_are_rejected(field: str, value: float) -> None:
+    with pytest.raises(ValueError):
+        RoutingPreference(**{field: value})
 
 
 async def test_amount_zero_returns_none() -> None:
@@ -362,12 +371,38 @@ async def test_final_amount_accounts_for_fx_and_converted_fees() -> None:
     )
 
     route = router.find_cheapest("GBP", "CNY", Decimal("100"))
-    expected = (Decimal("100") * Decimal("0.8") * Decimal("9.0")) - (
-        Decimal("15") * get_mid_rate("USD", "CNY")
-    )
+    expected = (
+        (Decimal("100") - (Decimal("5") * get_mid_rate("USD", "GBP")))
+        * Decimal("0.8")
+        - (Decimal("10") * get_mid_rate("USD", "EUR"))
+    ) * Decimal("9.0")
 
     assert route is not None
     assert float(route.final_amount) == pytest.approx(float(expected))
+
+
+async def test_cheapest_includes_fx_spread_in_all_in_cost() -> None:
+    router = await _build_router(
+        networks=[
+            FakeNetwork(
+                "zero-fee-poor-rate",
+                {"USD", "CNY"},
+                {("USD", "CNY"): _quote("Poor rate", "0", "1", "5.0")},
+            ),
+            FakeNetwork(
+                "fee-good-rate",
+                {"USD", "CNY"},
+                {("USD", "CNY"): _quote("Good rate", "3", "1", "7.0")},
+            ),
+        ],
+        currencies=["USD", "CNY"],
+        amount=Decimal("100"),
+    )
+
+    route = router.find_cheapest("USD", "CNY", Decimal("100"))
+
+    assert route is not None
+    assert route.hops[0].network_name == "Good rate"
 
 
 async def test_normalization_prevents_single_dimension_from_dominating() -> None:

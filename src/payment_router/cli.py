@@ -110,11 +110,16 @@ def route_command(
         )
         raise typer.Exit(code=1)
 
-    graph = PaymentGraph(networks=networks, currencies=sorted(supported), amount=parsed_amount)
+    graph = PaymentGraph(
+        networks=networks,
+        currencies=sorted(supported),
+        amount=parsed_amount,
+        amount_currency=source_currency,
+    )
     asyncio.run(graph.build())
 
-    if graph._build_errors:
-        _print_build_warnings(graph._build_errors)
+    if graph.build_errors:
+        _print_build_warnings(list(graph.build_errors))
 
     router = PaymentRouter(graph)
     preference = _preference_from_name(prefer)
@@ -179,9 +184,10 @@ def _supported_currencies(networks: list[PaymentNetwork]) -> set[str]:
 
 def _parse_amount(raw_amount: str) -> Decimal | None:
     try:
-        return Decimal(raw_amount)
+        amount = Decimal(raw_amount)
     except InvalidOperation:
         return None
+    return amount if amount.is_finite() else None
 
 
 def _preference_from_name(prefer: PreferenceName) -> RoutingPreference:

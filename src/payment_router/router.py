@@ -4,7 +4,7 @@ from dataclasses import field
 from decimal import Decimal
 
 import networkx as nx
-from pydantic import ConfigDict, model_validator
+from pydantic import ConfigDict, Field, model_validator
 from pydantic.dataclasses import dataclass
 
 from payment_router.core import fx
@@ -12,11 +12,11 @@ from payment_router.core.graph import NetworkEdge, PaymentGraph
 from payment_router.core.models import Hop, Route
 
 
-@dataclass(config=ConfigDict(frozen=True))
+@dataclass(config=ConfigDict(frozen=True, allow_inf_nan=False))
 class RoutingPreference:
-    cost_weight: float = 0.5
-    time_weight: float = 0.5
-    max_hops: int = 5
+    cost_weight: float = Field(default=0.5, ge=0)
+    time_weight: float = Field(default=0.5, ge=0)
+    max_hops: int = Field(default=5, ge=1)
     _normalized_weights: tuple[float, float] = field(init=False, repr=False)
 
     @model_validator(mode="after")
@@ -57,7 +57,7 @@ class PaymentRouter:
         source_currency = from_currency.strip().upper()
         target_currency = to_currency.strip().upper()
 
-        if amount <= 0:
+        if not amount.is_finite() or amount <= 0:
             return None
         if source_currency == target_currency:
             return self._zero_hop_route(source_currency, amount, preference)
@@ -127,7 +127,7 @@ class PaymentRouter:
         source_currency = from_currency.strip().upper()
         target_currency = to_currency.strip().upper()
 
-        if top_n <= 0 or amount <= 0:
+        if top_n <= 0 or not amount.is_finite() or amount <= 0:
             return []
         if source_currency == target_currency:
             return [self._zero_hop_route(source_currency, amount, preference)]
@@ -167,12 +167,15 @@ class PaymentRouter:
             for _, _, _, data in self._graph.graph.edges(keys=True, data=True)
             if isinstance(data.get("edge"), NetworkEdge)
         ]
-        max_fee = max((edge.fee_usd for edge in edges), default=Decimal("0"))
+        max_cost = max(
+            (self._edge_cost_usd(edge) for edge in edges),
+            default=Decimal("0"),
+        )
         max_time = max((Decimal(str(edge.time_hours)) for edge in edges), default=Decimal("0"))
         return _ScoreContext(
             alpha=preference.alpha,
             beta=preference.beta,
-            max_fee=max_fee,
+            max_cost=max_cost,
             max_time=max_time,
         )
 
@@ -258,14 +261,16 @@ class PaymentRouter:
             (Decimal(str(edge.time_hours)) for edge in edges),
             start=Decimal("0"),
         )
-        gross_target_amount = amount
+        final_amount = amount
         for edge in edges:
-            gross_target_amount *= edge.fx_rate
-
-        target_fee = total_fee_usd * fx.get_mid_rate("USD", node_path[-1])
-        final_amount = gross_target_amount - target_fee
-        if final_amount < 0:
-            final_amount = Decimal("0")
+            fee_in_source_currency = edge.fee_usd * fx.get_mid_rate(
+                "USD",
+                edge.from_currency,
+            )
+            final_amount = max(
+                final_amount - fee_in_source_currency,
+                Decimal("0"),
+            ) * edge.fx_rate
 
         return Route(
             hops=hops,
@@ -310,34 +315,41 @@ class PaymentRouter:
     def _route_score(self, route: Route, score_context: _ScoreContext) -> float:
         score = 0.0
         for hop in route.hops:
-            edge = NetworkEdge(
-                network_name=hop.network_name,
-                from_currency=hop.currency_in,
-                to_currency=hop.currency_out,
-                fee_usd=hop.fee_usd,
-                time_hours=float(hop.time_hours),
-                fx_rate=hop.fx_rate,
-                data_source=hop.data_source,
-                amount_at_send=route.source_amount,
-            )
-            edge_weight = self._edge_weight(edge, score_context)
-            if edge_weight is not None:
-                score += edge_weight
+            matching_weights = [
+                self._edge_weight(edge, score_context)
+                for edge in self._graph.get_edges(hop.currency_in, hop.currency_out)
+                if edge.network_name == hop.network_name
+            ]
+            visible_weights = [weight for weight in matching_weights if weight is not None]
+            if not visible_weights:
+                return float("inf")
+            score += min(visible_weights)
         return score
 
-    @staticmethod
-    def _edge_weight(edge: object, score_context: _ScoreContext) -> float | None:
+    def _edge_weight(self, edge: object, score_context: _ScoreContext) -> float | None:
         if not isinstance(edge, NetworkEdge):
             return None
 
-        fee_component = (
-            float(edge.fee_usd / score_context.max_fee) if score_context.max_fee > 0 else 0.0
+        cost_component = (
+            float(self._edge_cost_usd(edge) / score_context.max_cost)
+            if score_context.max_cost > 0
+            else 0.0
         )
         edge_time = Decimal(str(edge.time_hours))
         time_component = (
             float(edge_time / score_context.max_time) if score_context.max_time > 0 else 0.0
         )
-        return (score_context.alpha * fee_component) + (score_context.beta * time_component)
+        return (score_context.alpha * cost_component) + (score_context.beta * time_component)
+
+    @staticmethod
+    def _edge_cost_usd(edge: NetworkEdge) -> Decimal:
+        mid_rate = fx.get_mid_rate(edge.from_currency, edge.to_currency)
+        spread_fraction = max(
+            Decimal("1") - (edge.fx_rate / mid_rate),
+            Decimal("0"),
+        )
+        spread_cost_source = edge.amount_at_send * spread_fraction
+        return edge.fee_usd + fx.to_usd(spread_cost_source, edge.from_currency)
 
     @staticmethod
     def _zero_hop_route(
@@ -361,5 +373,5 @@ class PaymentRouter:
 class _ScoreContext:
     alpha: float
     beta: float
-    max_fee: Decimal
+    max_cost: Decimal
     max_time: Decimal

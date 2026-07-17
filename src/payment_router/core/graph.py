@@ -9,6 +9,7 @@ import networkx as nx
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass
 
+from payment_router.core import fx
 from payment_router.core.models import DataSource, NetworkQuote
 from payment_router.networks.base import PaymentNetwork
 
@@ -31,10 +32,24 @@ class PaymentGraph:
         networks: list[PaymentNetwork],
         currencies: list[str],
         amount: Decimal,
+        amount_currency: str | None = None,
     ) -> None:
         self._networks = networks
-        self._currencies = [currency.strip().upper() for currency in dict.fromkeys(currencies)]
+        self._currencies = list(
+            dict.fromkeys(currency.strip().upper() for currency in currencies)
+        )
+        if not self._currencies:
+            raise ValueError("currencies cannot be empty")
+        unsupported_currencies = set(self._currencies) - fx.supported_currencies()
+        if unsupported_currencies:
+            unsupported = ", ".join(sorted(unsupported_currencies))
+            raise fx.UnsupportedCurrencyError(f"Unsupported currencies: {unsupported}")
+        if not amount.is_finite() or amount < 0:
+            raise ValueError("amount must be a non-negative finite decimal")
         self._amount = amount
+        self._amount_currency = (amount_currency or self._currencies[0]).strip().upper()
+        if self._amount_currency not in self._currencies:
+            raise ValueError("amount_currency must be included in currencies")
         self.graph = nx.MultiDiGraph()
         self.graph.add_nodes_from(self._currencies)
         self._build_errors: list[tuple[str, str, str, Exception]] = []
@@ -52,6 +67,14 @@ class PaymentGraph:
             if from_currency != to_currency
         ]
         await asyncio.gather(*tasks)
+        self._build_errors.sort(
+            key=lambda item: (item[0], item[1], item[2], type(item[3]).__name__, str(item[3]))
+        )
+
+    @property
+    def build_errors(self) -> tuple[tuple[str, str, str, Exception], ...]:
+        """Provider failures captured during the most recent graph build."""
+        return tuple(self._build_errors)
 
     def get_edges(self, from_currency: str, to_currency: str) -> list[NetworkEdge]:
         source_currency = from_currency.strip().upper()
@@ -90,7 +113,16 @@ class PaymentGraph:
         to_currency: str,
     ) -> None:
         try:
-            quote = await self._resolve_quote(network, from_currency, to_currency)
+            quote_amount = self._amount * fx.get_mid_rate(
+                self._amount_currency,
+                from_currency,
+            )
+            quote = await self._resolve_quote(
+                network,
+                quote_amount,
+                from_currency,
+                to_currency,
+            )
         except Exception as exc:
             self._build_errors.append(
                 (self._network_label(network), from_currency, to_currency, exc)
@@ -108,22 +140,18 @@ class PaymentGraph:
             time_hours=float(quote.time_hours),
             fx_rate=quote.fx_rate,
             data_source=quote.data_source,
-            amount_at_send=self._amount,
+            amount_at_send=quote_amount,
         )
-        self.graph.add_edge(
-            from_currency,
-            to_currency,
-            key=quote.network_name,
-            edge=edge,
-        )
+        self.graph.add_edge(from_currency, to_currency, edge=edge)
 
     async def _resolve_quote(
         self,
         network: PaymentNetwork,
+        amount: Decimal,
         from_currency: str,
         to_currency: str,
     ) -> NetworkQuote | None:
-        result = network.get_quote(self._amount, from_currency, to_currency)
+        result = network.get_quote(amount, from_currency, to_currency)
         if inspect.isawaitable(result):
             awaited_result = await result
             return self._validate_quote(awaited_result)

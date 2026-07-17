@@ -252,7 +252,7 @@ async def test_get_quote_returns_verified_quote_for_gbp_to_cny(
 
     assert quote is not None
     assert quote.network_name == "wise"
-    assert quote.fee_usd == Decimal("11.25")
+    assert quote.fee_usd == Decimal("14.2875")
     assert quote.fx_rate == Decimal("9.21691")
     assert quote.time_hours == Decimal("0")
     assert quote.data_source is DataSource.VERIFIED
