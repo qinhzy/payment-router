@@ -197,6 +197,29 @@ async def test_disconnected_target_returns_none() -> None:
     assert route is None
 
 
+async def test_find_all_routes_returns_empty_for_disconnected_target() -> None:
+    router = await _build_router(
+        networks=[
+            FakeNetwork(
+                "bridge",
+                {"USD", "EUR"},
+                {("USD", "EUR"): _quote("Bridge", "2", "2", "0.9")},
+            )
+        ],
+        currencies=["USD", "EUR", "CNY"],
+        amount=Decimal("100"),
+    )
+
+    routes = router.find_all_routes(
+        "USD",
+        "CNY",
+        Decimal("100"),
+        RoutingPreference(cost_weight=0.5, time_weight=0.5),
+    )
+
+    assert routes == []
+
+
 async def test_max_hops_limit_blocks_longer_route() -> None:
     router = await _build_router(
         networks=[
@@ -372,13 +395,75 @@ async def test_final_amount_accounts_for_fx_and_converted_fees() -> None:
 
     route = router.find_cheapest("GBP", "CNY", Decimal("100"))
     expected = (
-        (Decimal("100") - (Decimal("5") * get_mid_rate("USD", "GBP")))
-        * Decimal("0.8")
+        (Decimal("100") - (Decimal("5") * get_mid_rate("USD", "GBP"))) * Decimal("0.8")
         - (Decimal("10") * get_mid_rate("USD", "EUR"))
     ) * Decimal("9.0")
 
     assert route is not None
     assert float(route.final_amount) == pytest.approx(float(expected))
+
+
+async def test_router_falls_back_when_best_static_path_cannot_cover_its_fee() -> None:
+    router = await _build_router(
+        networks=[
+            FakeNetwork(
+                "unusable-direct",
+                {"USD", "CNY"},
+                {("USD", "CNY"): _quote("Unusable", "101", "1", "7.0")},
+            ),
+            FakeNetwork(
+                "hop-1",
+                {"USD", "EUR"},
+                {("USD", "EUR"): _quote("Hop 1", "1", "2", "0.8")},
+            ),
+            FakeNetwork(
+                "hop-2",
+                {"EUR", "CNY"},
+                {("EUR", "CNY"): _quote("Hop 2", "1", "2", "9.0")},
+            ),
+        ],
+        currencies=["USD", "EUR", "CNY"],
+        amount=Decimal("100"),
+    )
+
+    route = router.find_fastest("USD", "CNY", Decimal("100"))
+
+    assert route is not None
+    assert [hop.network_name for hop in route.hops] == ["Hop 1", "Hop 2"]
+    assert route.final_amount > 0
+
+
+async def test_find_all_routes_excludes_routes_that_cannot_pay_fixed_fees() -> None:
+    router = await _build_router(
+        networks=[
+            FakeNetwork(
+                "unusable",
+                {"USD", "CNY"},
+                {("USD", "CNY"): _quote("Unusable", "100", "1", "7.0")},
+            ),
+            FakeNetwork(
+                "usable",
+                {"USD", "EUR", "CNY"},
+                {
+                    ("USD", "EUR"): _quote("USD->EUR", "1", "2", "0.8"),
+                    ("EUR", "CNY"): _quote("EUR->CNY", "1", "2", "9.0"),
+                },
+            ),
+        ],
+        currencies=["USD", "EUR", "CNY"],
+        amount=Decimal("100"),
+    )
+
+    routes = router.find_all_routes(
+        "USD",
+        "CNY",
+        Decimal("100"),
+        RoutingPreference(cost_weight=0.0, time_weight=1.0),
+        top_n=3,
+    )
+
+    assert len(routes) == 1
+    assert routes[0].final_amount > 0
 
 
 async def test_cheapest_includes_fx_spread_in_all_in_cost() -> None:
@@ -420,13 +505,13 @@ async def test_normalization_prevents_single_dimension_from_dominating() -> None
             ),
         ],
         currencies=["USD", "CNY"],
-        amount=Decimal("100"),
+        amount=Decimal("1000"),
     )
 
     route = router.find_route(
         "USD",
         "CNY",
-        Decimal("100"),
+        Decimal("1000"),
         RoutingPreference(cost_weight=0.5, time_weight=0.5),
     )
 

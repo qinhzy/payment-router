@@ -1,5 +1,8 @@
 from decimal import Decimal
 
+import pytest
+from pydantic import ValidationError
+
 from payment_router.core.models import DataSource, Hop, NetworkQuote, Route
 
 
@@ -57,3 +60,14 @@ def test_network_quote_model_tracks_data_source() -> None:
 
     assert quote.network_name == "wise"
     assert quote.data_source is DataSource.ESTIMATED
+
+
+def test_network_quote_rejects_non_finite_values() -> None:
+    with pytest.raises(ValidationError):
+        NetworkQuote(
+            network_name="invalid",
+            fee_usd=Decimal("Infinity"),
+            time_hours=Decimal("1"),
+            fx_rate=Decimal("1"),
+            data_source=DataSource.ESTIMATED,
+        )

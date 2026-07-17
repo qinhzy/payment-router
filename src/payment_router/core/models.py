@@ -17,7 +17,11 @@ class DataSource(StrEnum):
 
 
 class _FrozenModel(BaseModel):
-    model_config = ConfigDict(frozen=True, str_strip_whitespace=True)
+    model_config = ConfigDict(
+        frozen=True,
+        str_strip_whitespace=True,
+        allow_inf_nan=False,
+    )
 
 
 class Hop(_FrozenModel):

@@ -88,7 +88,21 @@ class PaymentRouter:
             if node_path is None:
                 return None
 
-        return self._route_from_path(node_path, amount, preference, score_context)
+        route = self._route_from_path(node_path, amount, preference, score_context)
+        if route is not None:
+            return route
+
+        # The static shortest path can still be unusable when a fixed fee consumes
+        # the live balance. Continue through ranked alternatives instead of
+        # returning a zero-value route or incorrectly reporting no path.
+        alternatives = self.find_all_routes(
+            source_currency,
+            target_currency,
+            amount,
+            preference,
+            top_n=1,
+        )
+        return alternatives[0] if alternatives else None
 
     def find_cheapest(
         self,
@@ -148,15 +162,18 @@ class PaymentRouter:
             return []
 
         routes: list[Route] = []
-        for node_path in path_generator:
-            if len(node_path) - 1 > preference.max_hops:
-                continue
+        try:
+            for node_path in path_generator:
+                if len(node_path) - 1 > preference.max_hops:
+                    continue
 
-            route = self._route_from_path(node_path, amount, preference, score_context)
-            if route is not None:
-                routes.append(route)
-            if len(routes) == top_n:
-                break
+                route = self._route_from_path(node_path, amount, preference, score_context)
+                if route is not None:
+                    routes.append(route)
+                if len(routes) == top_n:
+                    break
+        except (nx.NetworkXNoPath, nx.NodeNotFound):
+            return []
 
         routes.sort(key=lambda route: self._route_score(route, score_context))
         return routes
@@ -236,11 +253,22 @@ class PaymentRouter:
         score_context: _ScoreContext,
     ) -> Route | None:
         edges: list[NetworkEdge] = []
+        final_amount = amount
         for from_currency, to_currency in zip(node_path, node_path[1:]):
-            edge = self._select_best_edge(from_currency, to_currency, score_context)
+            edge = self._select_best_edge(
+                from_currency,
+                to_currency,
+                score_context,
+                available_amount=final_amount,
+            )
             if edge is None:
                 return None
             edges.append(edge)
+            fee_in_source_currency = edge.fee_usd * fx.get_mid_rate(
+                "USD",
+                edge.from_currency,
+            )
+            final_amount = (final_amount - fee_in_source_currency) * edge.fx_rate
 
         hops = [
             Hop(
@@ -261,17 +289,6 @@ class PaymentRouter:
             (Decimal(str(edge.time_hours)) for edge in edges),
             start=Decimal("0"),
         )
-        final_amount = amount
-        for edge in edges:
-            fee_in_source_currency = edge.fee_usd * fx.get_mid_rate(
-                "USD",
-                edge.from_currency,
-            )
-            final_amount = max(
-                final_amount - fee_in_source_currency,
-                Decimal("0"),
-            ) * edge.fx_rate
-
         return Route(
             hops=hops,
             total_fee_usd=total_fee_usd,
@@ -288,10 +305,18 @@ class PaymentRouter:
         from_currency: str,
         to_currency: str,
         score_context: _ScoreContext,
+        available_amount: Decimal | None = None,
     ) -> NetworkEdge | None:
         best_edge: NetworkEdge | None = None
         best_weight: float | None = None
         for edge in self._graph.get_edges(from_currency, to_currency):
+            if available_amount is not None:
+                fee_in_source_currency = edge.fee_usd * fx.get_mid_rate(
+                    "USD",
+                    edge.from_currency,
+                )
+                if available_amount <= fee_in_source_currency:
+                    continue
             weight = self._edge_weight(edge, score_context)
             if weight is None:
                 continue

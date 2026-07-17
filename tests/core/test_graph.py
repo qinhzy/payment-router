@@ -310,3 +310,29 @@ async def test_build_runs_quotes_concurrently() -> None:
     assert len(network._started_at) == 12
     assert elapsed < 0.2
     assert max(network._started_at) - min(network._started_at) < 0.1
+
+
+async def test_build_times_out_stalled_network_quotes() -> None:
+    network = TimingNetwork(delay_seconds=1)
+    graph = PaymentGraph(
+        networks=[network],
+        currencies=["USD", "EUR"],
+        amount=Decimal("10"),
+        quote_timeout_seconds=0.001,
+    )
+
+    await graph.build()
+
+    assert graph.edge_count() == 0
+    assert len(graph.build_errors) == 2
+    assert all("timed out" in str(error) for *_, error in graph.build_errors)
+
+
+def test_constructor_rejects_invalid_quote_timeout() -> None:
+    with pytest.raises(ValueError, match="quote_timeout_seconds"):
+        PaymentGraph(
+            networks=[],
+            currencies=["USD", "EUR"],
+            amount=Decimal("10"),
+            quote_timeout_seconds=float("nan"),
+        )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import math
 from decimal import Decimal
 from typing import Any
 
@@ -33,11 +34,10 @@ class PaymentGraph:
         currencies: list[str],
         amount: Decimal,
         amount_currency: str | None = None,
+        quote_timeout_seconds: float = 10.0,
     ) -> None:
         self._networks = networks
-        self._currencies = list(
-            dict.fromkeys(currency.strip().upper() for currency in currencies)
-        )
+        self._currencies = list(dict.fromkeys(currency.strip().upper() for currency in currencies))
         if not self._currencies:
             raise ValueError("currencies cannot be empty")
         unsupported_currencies = set(self._currencies) - fx.supported_currencies()
@@ -50,6 +50,9 @@ class PaymentGraph:
         self._amount_currency = (amount_currency or self._currencies[0]).strip().upper()
         if self._amount_currency not in self._currencies:
             raise ValueError("amount_currency must be included in currencies")
+        if not math.isfinite(quote_timeout_seconds) or quote_timeout_seconds <= 0:
+            raise ValueError("quote_timeout_seconds must be a positive finite number")
+        self._quote_timeout_seconds = quote_timeout_seconds
         self.graph = nx.MultiDiGraph()
         self.graph.add_nodes_from(self._currencies)
         self._build_errors: list[tuple[str, str, str, Exception]] = []
@@ -153,7 +156,15 @@ class PaymentGraph:
     ) -> NetworkQuote | None:
         result = network.get_quote(amount, from_currency, to_currency)
         if inspect.isawaitable(result):
-            awaited_result = await result
+            try:
+                awaited_result = await asyncio.wait_for(
+                    result,
+                    timeout=self._quote_timeout_seconds,
+                )
+            except TimeoutError as exc:
+                raise TimeoutError(
+                    f"quote timed out after {self._quote_timeout_seconds:g} seconds"
+                ) from exc
             return self._validate_quote(awaited_result)
         return self._validate_quote(result)
 

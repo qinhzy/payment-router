@@ -60,6 +60,8 @@ flowchart LR
 - Generates Mermaid flowcharts that can be pasted directly into GitHub or Notion.
 - Attaches a `DataSource` label to every quote so data provenance remains explicit.
 - Uses banker's rounding (`ROUND_HALF_EVEN`) for shared FX normalization, matching standard financial rounding practice.
+- Times out stalled network quotes and records the affected corridor without discarding healthy providers.
+- Rejects paths whose fixed fee would consume the live hop balance, then continues to the next feasible route.
 - Validates graph construction, fee currency conversion, all-in route ranking, CLI behavior, and every network model with an automated test suite.
 
 ## Quick start
