@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from typer.testing import CliRunner
 
-from payment_router.cli import app
+from payment_router.cli import _instantiate_networks, _network_display_name, app
 from payment_router.core.models import DataSource, NetworkQuote
 from payment_router.networks.base import PaymentNetwork
 
@@ -115,6 +115,20 @@ def test_route_command_top_n_outputs_comparison_table(monkeypatch) -> None:
     assert result.output.count("flowchart LR") == 3
 
 
+def test_decide_command_outputs_all_profiles_and_tradeoff(monkeypatch) -> None:
+    monkeypatch.setattr("payment_router.cli._instantiate_networks", _stub_networks)
+
+    result = runner.invoke(app, ["decide", "USD", "CNY", "100"])
+
+    assert result.exit_code == 0
+    assert "Decision Board" in result.output
+    assert "Cheapest" in result.output
+    assert "Fastest" in result.output
+    assert "Balanced" in result.output
+    assert "Decision note" in result.output
+    assert "VERIFIED" in result.output
+
+
 def test_route_command_rejects_unsupported_currency(monkeypatch) -> None:
     monkeypatch.setattr("payment_router.cli._instantiate_networks", _stub_networks)
 
@@ -135,8 +149,34 @@ def test_networks_command_lists_available_networks(monkeypatch) -> None:
     assert "SWIFT" in result.output
 
 
+def test_default_networks_include_standard_and_instant_sepa() -> None:
+    names = [_network_display_name(network) for network in _instantiate_networks()]
+
+    assert names == ["Wise", "SEPA", "SEPA Instant", "SWIFT"]
+
+
 def test_version_option_prints_project_version() -> None:
     result = runner.invoke(app, ["--version"])
 
     assert result.exit_code == 0
-    assert "0.1.0" in result.output
+    assert "0.2.0" in result.output
+
+
+def test_sources_command_lists_verified_and_estimated_evidence() -> None:
+    result = runner.invoke(app, ["sources"])
+
+    assert result.exit_code == 0
+    assert "Data Provenance Registry" in result.output
+    assert "wise-live-quote" in result.output
+    assert "swift-model-parameters" in result.output
+    assert "VERIFIED" in result.output
+    assert "ESTIMATED" in result.output
+
+
+def test_route_command_rejects_non_finite_amount(monkeypatch) -> None:
+    monkeypatch.setattr("payment_router.cli._instantiate_networks", _stub_networks)
+
+    result = runner.invoke(app, ["route", "USD", "CNY", "NaN"])
+
+    assert result.exit_code != 0
+    assert "valid decimal number" in result.output

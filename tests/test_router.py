@@ -174,6 +174,41 @@ async def test_same_currency_returns_zero_hop_route() -> None:
     assert route.final_amount == Decimal("25")
 
 
+async def test_same_currency_routes_compare_parallel_payment_rails() -> None:
+    router = await _build_router(
+        networks=[
+            FakeNetwork(
+                "standard",
+                {"EUR"},
+                {("EUR", "EUR"): _quote("SEPA", "0.27", "24", "1.0")},
+            ),
+            FakeNetwork(
+                "instant",
+                {"EUR"},
+                {("EUR", "EUR"): _quote("SEPA Instant", "0.54", "0.003", "1.0")},
+            ),
+        ],
+        currencies=["EUR"],
+        amount=Decimal("100"),
+    )
+
+    cheapest = router.find_cheapest("EUR", "EUR", Decimal("100"))
+    fastest = router.find_fastest("EUR", "EUR", Decimal("100"))
+    routes = router.find_all_routes(
+        "EUR",
+        "EUR",
+        Decimal("100"),
+        RoutingPreference(cost_weight=0.5, time_weight=0.5),
+        top_n=2,
+    )
+
+    assert cheapest is not None
+    assert fastest is not None
+    assert cheapest.hops[0].network_name == "SEPA"
+    assert fastest.hops[0].network_name == "SEPA Instant"
+    assert {route.hops[0].network_name for route in routes} == {"SEPA", "SEPA Instant"}
+
+
 async def test_disconnected_target_returns_none() -> None:
     router = await _build_router(
         networks=[
@@ -195,6 +230,29 @@ async def test_disconnected_target_returns_none() -> None:
     )
 
     assert route is None
+
+
+async def test_find_all_routes_returns_empty_for_disconnected_target() -> None:
+    router = await _build_router(
+        networks=[
+            FakeNetwork(
+                "bridge",
+                {"USD", "EUR"},
+                {("USD", "EUR"): _quote("Bridge", "2", "2", "0.9")},
+            )
+        ],
+        currencies=["USD", "EUR", "CNY"],
+        amount=Decimal("100"),
+    )
+
+    routes = router.find_all_routes(
+        "USD",
+        "CNY",
+        Decimal("100"),
+        RoutingPreference(cost_weight=0.5, time_weight=0.5),
+    )
+
+    assert routes == []
 
 
 async def test_max_hops_limit_blocks_longer_route() -> None:
@@ -249,6 +307,35 @@ async def test_parallel_edges_choose_cheapest_option() -> None:
     assert route.hops[0].network_name == "Wise"
 
 
+async def test_find_all_routes_preserves_parallel_network_options() -> None:
+    router = await _build_router(
+        networks=[
+            FakeNetwork(
+                "wise",
+                {"USD", "CNY"},
+                {("USD", "CNY"): _quote("Wise", "5", "1", "7.0")},
+            ),
+            FakeNetwork(
+                "swift",
+                {"USD", "CNY"},
+                {("USD", "CNY"): _quote("SWIFT", "20", "30", "6.8")},
+            ),
+        ],
+        currencies=["USD", "CNY"],
+        amount=Decimal("100"),
+    )
+
+    routes = router.find_all_routes(
+        "USD",
+        "CNY",
+        Decimal("100"),
+        RoutingPreference(cost_weight=0.5, time_weight=0.5),
+        top_n=2,
+    )
+
+    assert [route.hops[0].network_name for route in routes] == ["Wise", "SWIFT"]
+
+
 async def test_two_hop_route_is_found_when_no_direct_path_exists() -> None:
     router = await _build_router(
         networks=[
@@ -275,7 +362,7 @@ async def test_two_hop_route_is_found_when_no_direct_path_exists() -> None:
     assert route.total_time_hours == Decimal("5")
 
 
-async def test_find_all_routes_returns_top_n_sorted_by_weight() -> None:
+async def test_find_all_routes_returns_top_n_sorted_by_all_in_cost() -> None:
     router = await _build_router(
         networks=[
             FakeNetwork(
@@ -317,12 +404,21 @@ async def test_find_all_routes_returns_top_n_sorted_by_weight() -> None:
     )
 
     assert len(routes) == 3
-    assert [route.total_fee_usd for route in routes] == [Decimal("6"), Decimal("8"), Decimal("10")]
+    assert [route.total_fee_usd for route in routes] == [Decimal("10"), Decimal("8"), Decimal("6")]
 
 
 def test_zero_total_weight_preference_is_rejected() -> None:
     with pytest.raises(ValueError):
         RoutingPreference(cost_weight=0.0, time_weight=0.0)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("cost_weight", -0.1), ("time_weight", -0.1), ("max_hops", 0)],
+)
+def test_invalid_preference_values_are_rejected(field: str, value: float) -> None:
+    with pytest.raises(ValueError):
+        RoutingPreference(**{field: value})
 
 
 async def test_amount_zero_returns_none() -> None:
@@ -362,12 +458,100 @@ async def test_final_amount_accounts_for_fx_and_converted_fees() -> None:
     )
 
     route = router.find_cheapest("GBP", "CNY", Decimal("100"))
-    expected = (Decimal("100") * Decimal("0.8") * Decimal("9.0")) - (
-        Decimal("15") * get_mid_rate("USD", "CNY")
-    )
+    expected = (
+        (Decimal("100") - (Decimal("5") * get_mid_rate("USD", "GBP"))) * Decimal("0.8")
+        - (Decimal("10") * get_mid_rate("USD", "EUR"))
+    ) * Decimal("9.0")
 
     assert route is not None
     assert float(route.final_amount) == pytest.approx(float(expected))
+
+
+async def test_router_falls_back_when_best_static_path_cannot_cover_its_fee() -> None:
+    router = await _build_router(
+        networks=[
+            FakeNetwork(
+                "unusable-direct",
+                {"USD", "CNY"},
+                {("USD", "CNY"): _quote("Unusable", "101", "1", "7.0")},
+            ),
+            FakeNetwork(
+                "hop-1",
+                {"USD", "EUR"},
+                {("USD", "EUR"): _quote("Hop 1", "1", "2", "0.8")},
+            ),
+            FakeNetwork(
+                "hop-2",
+                {"EUR", "CNY"},
+                {("EUR", "CNY"): _quote("Hop 2", "1", "2", "9.0")},
+            ),
+        ],
+        currencies=["USD", "EUR", "CNY"],
+        amount=Decimal("100"),
+    )
+
+    route = router.find_fastest("USD", "CNY", Decimal("100"))
+
+    assert route is not None
+    assert [hop.network_name for hop in route.hops] == ["Hop 1", "Hop 2"]
+    assert route.final_amount > 0
+
+
+async def test_find_all_routes_excludes_routes_that_cannot_pay_fixed_fees() -> None:
+    router = await _build_router(
+        networks=[
+            FakeNetwork(
+                "unusable",
+                {"USD", "CNY"},
+                {("USD", "CNY"): _quote("Unusable", "100", "1", "7.0")},
+            ),
+            FakeNetwork(
+                "usable",
+                {"USD", "EUR", "CNY"},
+                {
+                    ("USD", "EUR"): _quote("USD->EUR", "1", "2", "0.8"),
+                    ("EUR", "CNY"): _quote("EUR->CNY", "1", "2", "9.0"),
+                },
+            ),
+        ],
+        currencies=["USD", "EUR", "CNY"],
+        amount=Decimal("100"),
+    )
+
+    routes = router.find_all_routes(
+        "USD",
+        "CNY",
+        Decimal("100"),
+        RoutingPreference(cost_weight=0.0, time_weight=1.0),
+        top_n=3,
+    )
+
+    assert len(routes) == 1
+    assert routes[0].final_amount > 0
+
+
+async def test_cheapest_includes_fx_spread_in_all_in_cost() -> None:
+    router = await _build_router(
+        networks=[
+            FakeNetwork(
+                "zero-fee-poor-rate",
+                {"USD", "CNY"},
+                {("USD", "CNY"): _quote("Poor rate", "0", "1", "5.0")},
+            ),
+            FakeNetwork(
+                "fee-good-rate",
+                {"USD", "CNY"},
+                {("USD", "CNY"): _quote("Good rate", "3", "1", "7.0")},
+            ),
+        ],
+        currencies=["USD", "CNY"],
+        amount=Decimal("100"),
+    )
+
+    route = router.find_cheapest("USD", "CNY", Decimal("100"))
+
+    assert route is not None
+    assert route.hops[0].network_name == "Good rate"
 
 
 async def test_normalization_prevents_single_dimension_from_dominating() -> None:
@@ -385,13 +569,13 @@ async def test_normalization_prevents_single_dimension_from_dominating() -> None
             ),
         ],
         currencies=["USD", "CNY"],
-        amount=Decimal("100"),
+        amount=Decimal("1000"),
     )
 
     route = router.find_route(
         "USD",
         "CNY",
-        Decimal("100"),
+        Decimal("1000"),
         RoutingPreference(cost_weight=0.5, time_weight=0.5),
     )
 

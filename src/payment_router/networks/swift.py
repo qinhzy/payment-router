@@ -1,14 +1,13 @@
 """
 SWIFT simulator rules for correspondent-bank routing.
 
-Data source rationale (verified 2026-04-19):
-- Fee ranges reference Wise 2024 cross-border wire fee research together with
-  general industry public disclosures on correspondent-banking charges.
-- The simulator uses conservative median assumptions rather than any single
-  bank's published tariff.
+Data source rationale (reviewed 2026-07-18):
+- SWIFT's public correspondent-banking material supports the network topology.
+- Hop count, fee, delay, and spread values are explicit teaching assumptions;
+  they are not presented as measured industry medians.
 
-This module returns INDUSTRY_AVERAGE estimates and does not represent any
-specific bank's live quote.
+This module returns ESTIMATED values and does not represent any specific
+bank's live quote.
 """
 
 from __future__ import annotations
@@ -35,10 +34,22 @@ class SWIFTNetwork(PaymentNetwork):
         hop_time_hours: float = 18.0,
         hop_fx_spread: Decimal = Decimal("0.01"),
     ) -> None:
+        if isinstance(num_hops, bool) or not isinstance(num_hops, int) or num_hops < 1:
+            raise ValueError("num_hops must be a positive integer")
+        if not hop_fixed_fee_usd.is_finite() or hop_fixed_fee_usd < 0:
+            raise ValueError("hop_fixed_fee_usd must be a non-negative finite decimal")
+        if not hop_percentage_fee.is_finite() or not Decimal("0") <= hop_percentage_fee <= 1:
+            raise ValueError("hop_percentage_fee must be between 0 and 1")
+        normalized_time = Decimal(str(hop_time_hours))
+        if not normalized_time.is_finite() or normalized_time < 0:
+            raise ValueError("hop_time_hours must be a non-negative finite number")
+        if not hop_fx_spread.is_finite() or not Decimal("0") <= hop_fx_spread < 1:
+            raise ValueError("hop_fx_spread must be at least 0 and less than 1")
+
         self._num_hops = num_hops
         self._hop_fixed_fee_usd = hop_fixed_fee_usd
         self._hop_percentage_fee = hop_percentage_fee
-        self._hop_time_hours = Decimal(str(hop_time_hours))
+        self._hop_time_hours = normalized_time
         self._hop_fx_spread = hop_fx_spread
 
     async def get_quote(
@@ -73,7 +84,10 @@ class SWIFTNetwork(PaymentNetwork):
             fee_usd=total_fee_usd,
             time_hours=total_time_hours,
             fx_rate=fx_rate,
-            data_source=DataSource.INDUSTRY_AVERAGE,
+            data_source=DataSource.ESTIMATED,
+            fee_data_source=DataSource.ESTIMATED,
+            time_data_source=DataSource.ESTIMATED,
+            fx_data_source=DataSource.ESTIMATED,
         )
 
     def supported_currencies(self) -> set[str]:

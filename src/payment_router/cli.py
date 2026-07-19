@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import tomllib
 from decimal import Decimal, InvalidOperation
-from enum import StrEnum
-from pathlib import Path
+from importlib.metadata import version as distribution_version
 from typing import Annotated
 
 import typer
@@ -15,10 +13,17 @@ from rich.table import Table
 from rich.text import Text
 
 from payment_router.core.graph import PaymentGraph
+from payment_router.decision import (
+    DecisionProfile,
+    RouteDecision,
+    build_decision_board,
+    summarize_tradeoff,
+)
 from payment_router.networks.base import PaymentNetwork
 from payment_router.networks.sepa import SEPANetwork
 from payment_router.networks.swift import SWIFTNetwork
 from payment_router.networks.wise import WiseNetwork
+from payment_router.provenance import PROVENANCE_RECORDS
 from payment_router.router import PaymentRouter, RoutingPreference
 from payment_router.visualizer import route_to_mermaid, routes_to_comparison_table
 
@@ -32,17 +37,8 @@ console = Console()
 error_console = Console(stderr=True)
 
 
-class PreferenceName(StrEnum):
-    CHEAPEST = "cheapest"
-    FASTEST = "fastest"
-    BALANCED = "balanced"
-
-
 def _read_version() -> str:
-    pyproject_path = Path(__file__).resolve().parents[2] / "pyproject.toml"
-    with pyproject_path.open("rb") as file:
-        project_data = tomllib.load(file)
-    return str(project_data["project"]["version"])
+    return distribution_version("payment-router")
 
 
 def _version_callback(value: bool) -> None:
@@ -73,50 +69,23 @@ def route_command(
     to_currency: Annotated[str, typer.Argument(help="Target currency code.")],
     amount: Annotated[str, typer.Argument(help="Amount to send.")],
     prefer: Annotated[
-        PreferenceName,
+        DecisionProfile,
         typer.Option(
             "--prefer",
             help="Route preference: cheapest, fastest, or balanced.",
             case_sensitive=False,
         ),
-    ] = PreferenceName.BALANCED,
+    ] = DecisionProfile.BALANCED,
     top_n: Annotated[
         int,
         typer.Option("--top-n", min=1, help="Number of candidate routes to display."),
     ] = 1,
 ) -> None:
-    source_currency = from_currency.strip().upper()
-    target_currency = to_currency.strip().upper()
-    parsed_amount = _parse_amount(amount)
-
-    if parsed_amount is None:
-        _print_error("Amount must be a valid decimal number.")
-        raise typer.Exit(code=1)
-
-    if parsed_amount <= 0:
-        _print_error("Amount must be greater than zero.")
-        raise typer.Exit(code=1)
-
-    networks = _instantiate_networks()
-    supported = _supported_currencies(networks)
-    unsupported = [
-        currency for currency in (source_currency, target_currency) if currency not in supported
-    ]
-    if unsupported:
-        supported_list = ", ".join(sorted(supported))
-        _print_error(
-            "Unsupported currency code(s): "
-            f"{', '.join(unsupported)}. Supported currencies: {supported_list}."
-        )
-        raise typer.Exit(code=1)
-
-    graph = PaymentGraph(networks=networks, currencies=sorted(supported), amount=parsed_amount)
-    asyncio.run(graph.build())
-
-    if graph._build_errors:
-        _print_build_warnings(graph._build_errors)
-
-    router = PaymentRouter(graph)
+    source_currency, target_currency, parsed_amount, router = _prepare_router(
+        from_currency,
+        to_currency,
+        amount,
+    )
     preference = _preference_from_name(prefer)
 
     if top_n == 1:
@@ -152,6 +121,36 @@ def route_command(
     _render_route_comparison(routes, prefer)
 
 
+@app.command("decide")
+def decide_command(
+    from_currency: Annotated[str, typer.Argument(help="Source currency code.")],
+    to_currency: Annotated[str, typer.Argument(help="Target currency code.")],
+    amount: Annotated[str, typer.Argument(help="Amount to send.")],
+    show_diagrams: Annotated[
+        bool,
+        typer.Option("--show-diagrams", help="Render Mermaid diagrams for unique recommendations."),
+    ] = False,
+) -> None:
+    """Compare cheapest, fastest, and balanced recommendations in one decision board."""
+    source_currency, target_currency, parsed_amount, router = _prepare_router(
+        from_currency,
+        to_currency,
+        amount,
+    )
+    decisions = build_decision_board(
+        router,
+        source_currency,
+        target_currency,
+        parsed_amount,
+    )
+    if not decisions:
+        _print_error(
+            f"No route found from {source_currency} to {target_currency} for {parsed_amount}."
+        )
+        raise typer.Exit(code=1)
+    _render_decision_board(decisions, parsed_amount, show_diagrams=show_diagrams)
+
+
 @app.command("networks")
 def networks_command() -> None:
     networks = _instantiate_networks()
@@ -166,8 +165,32 @@ def networks_command() -> None:
     console.print(table)
 
 
+@app.command("sources")
+def sources_command() -> None:
+    """Show the auditable source and assumption registry."""
+    table = Table(title="Data Provenance Registry", header_style="bold white")
+    table.add_column("Evidence ID", style="cyan", no_wrap=True)
+    table.add_column("Network")
+    table.add_column("Class")
+    table.add_column("Checked")
+
+    for record in PROVENANCE_RECORDS:
+        table.add_row(
+            record.evidence_id,
+            record.network,
+            record.classification.value,
+            record.checked_on,
+        )
+
+    console.print(table)
+    console.print(
+        "References and caveats: "
+        "https://github.com/qinhzy/payment-router/blob/main/docs/DATA_SOURCES.md"
+    )
+
+
 def _instantiate_networks() -> list[PaymentNetwork]:
-    return [WiseNetwork(), SEPANetwork(), SWIFTNetwork()]
+    return [WiseNetwork(), SEPANetwork(), SEPANetwork(instant=True), SWIFTNetwork()]
 
 
 def _supported_currencies(networks: list[PaymentNetwork]) -> set[str]:
@@ -177,17 +200,58 @@ def _supported_currencies(networks: list[PaymentNetwork]) -> set[str]:
     return supported
 
 
+def _prepare_router(
+    from_currency: str,
+    to_currency: str,
+    amount: str,
+) -> tuple[str, str, Decimal, PaymentRouter]:
+    source_currency = from_currency.strip().upper()
+    target_currency = to_currency.strip().upper()
+    parsed_amount = _parse_amount(amount)
+    if parsed_amount is None:
+        _print_error("Amount must be a valid decimal number.")
+        raise typer.Exit(code=1)
+    if parsed_amount <= 0:
+        _print_error("Amount must be greater than zero.")
+        raise typer.Exit(code=1)
+
+    networks = _instantiate_networks()
+    supported = _supported_currencies(networks)
+    unsupported = [
+        currency for currency in (source_currency, target_currency) if currency not in supported
+    ]
+    if unsupported:
+        supported_list = ", ".join(sorted(supported))
+        _print_error(
+            "Unsupported currency code(s): "
+            f"{', '.join(unsupported)}. Supported currencies: {supported_list}."
+        )
+        raise typer.Exit(code=1)
+
+    graph = PaymentGraph(
+        networks=networks,
+        currencies=sorted(supported),
+        amount=parsed_amount,
+        amount_currency=source_currency,
+    )
+    asyncio.run(graph.build())
+    if graph.build_errors:
+        _print_build_warnings(list(graph.build_errors))
+    return source_currency, target_currency, parsed_amount, PaymentRouter(graph)
+
+
 def _parse_amount(raw_amount: str) -> Decimal | None:
     try:
-        return Decimal(raw_amount)
+        amount = Decimal(raw_amount)
     except InvalidOperation:
         return None
+    return amount if amount.is_finite() else None
 
 
-def _preference_from_name(prefer: PreferenceName) -> RoutingPreference:
-    if prefer is PreferenceName.CHEAPEST:
+def _preference_from_name(prefer: DecisionProfile) -> RoutingPreference:
+    if prefer is DecisionProfile.CHEAPEST:
         return RoutingPreference(cost_weight=1.0, time_weight=0.0)
-    if prefer is PreferenceName.FASTEST:
+    if prefer is DecisionProfile.FASTEST:
         return RoutingPreference(cost_weight=0.0, time_weight=1.0)
     return RoutingPreference(cost_weight=0.5, time_weight=0.5)
 
@@ -197,12 +261,12 @@ def _select_single_route(
     source_currency: str,
     target_currency: str,
     amount: Decimal,
-    prefer: PreferenceName,
+    prefer: DecisionProfile,
     preference: RoutingPreference,
 ):
-    if prefer is PreferenceName.CHEAPEST:
+    if prefer is DecisionProfile.CHEAPEST:
         return router.find_cheapest(source_currency, target_currency, amount)
-    if prefer is PreferenceName.FASTEST:
+    if prefer is DecisionProfile.FASTEST:
         return router.find_fastest(source_currency, target_currency, amount)
     return router.find_route(source_currency, target_currency, amount, preference)
 
@@ -251,7 +315,7 @@ def _render_route(route) -> None:
     )
 
 
-def _render_route_comparison(routes, prefer: PreferenceName) -> None:
+def _render_route_comparison(routes, prefer: DecisionProfile) -> None:
     console.print(
         Panel(
             f"Showing top {len(routes)} routes for preference: {prefer.value}.",
@@ -270,6 +334,73 @@ def _render_route_comparison(routes, prefer: PreferenceName) -> None:
                 border_style="blue",
             )
         )
+
+
+def _render_decision_board(
+    decisions: list[RouteDecision],
+    amount: Decimal,
+    *,
+    show_diagrams: bool,
+) -> None:
+    first_route = decisions[0].route
+    table = Table(
+        title=(
+            f"Decision Board · {amount} {first_route.source_currency}"
+            f" → {first_route.target_currency}"
+        ),
+        header_style="bold white",
+        show_lines=False,
+    )
+    table.add_column("Profile", style="bold")
+    table.add_column("Path", style="cyan")
+    table.add_column("Fee", justify="right")
+    table.add_column("ETA", justify="right")
+    table.add_column("Recipient gets", justify="right")
+    table.add_column("Evidence")
+
+    for decision in decisions:
+        route = decision.route
+        profile = decision.profile.value.title()
+        if decision.profile is DecisionProfile.BALANCED:
+            profile = f"★ {profile}"
+        table.add_row(
+            profile,
+            " → ".join(decision.path),
+            f"${route.total_fee_usd.quantize(Decimal('0.01')):.2f}",
+            f"{_format_hours(route.total_time_hours)}h",
+            f"{route.final_amount.quantize(Decimal('0.01')):.2f} {route.target_currency}",
+            decision.evidence,
+            style="bold" if decision.profile is DecisionProfile.BALANCED else None,
+        )
+    console.print(table)
+
+    tradeoff = summarize_tradeoff(decisions)
+    if tradeoff is not None:
+        if tradeoff.same_route_for_all_profiles:
+            explanation = "One route wins on cost, speed, and the balanced profile."
+        else:
+            explanation = (
+                "Balanced vs cheapest: "
+                f"fee {tradeoff.balanced_fee_delta_usd:+.2f} USD, "
+                f"time saved {tradeoff.balanced_hours_saved_vs_cheapest:+.3f}h, "
+                f"recipient amount {tradeoff.balanced_receive_delta:+.2f} "
+                f"{first_route.target_currency}."
+            )
+        console.print(Panel(explanation, title="Decision note", border_style="green"))
+
+    if show_diagrams:
+        rendered_signatures: set[tuple[tuple[str, ...], tuple[str, ...]]] = set()
+        for decision in decisions:
+            if decision.signature in rendered_signatures:
+                continue
+            rendered_signatures.add(decision.signature)
+            console.print(
+                Panel(
+                    Syntax(route_to_mermaid(decision.route), "mermaid"),
+                    title=f"{decision.profile.value.title()} route",
+                    border_style="blue",
+                )
+            )
 
 
 def _network_display_name(network: PaymentNetwork) -> str:

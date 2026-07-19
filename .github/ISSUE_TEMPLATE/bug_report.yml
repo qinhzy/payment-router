@@ -1,0 +1,41 @@
+name: Bug report
+description: Report reproducible incorrect behavior in the simulator
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include credentials, private financial data, or vulnerability details.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: "0.2.0 or a commit SHA"
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command or API call
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and output
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python version, and relevant proxy/network conditions
+    validations:
+      required: true

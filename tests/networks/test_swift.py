@@ -29,7 +29,10 @@ async def test_default_gbp_to_cny_quote_uses_three_hops() -> None:
     assert quote.fee_usd == expected_fee
     assert quote.time_hours == Decimal("54.0")
     assert float(quote.fx_rate) == pytest.approx(float(expected_fx_rate))
-    assert quote.data_source is DataSource.INDUSTRY_AVERAGE
+    assert quote.data_source is DataSource.ESTIMATED
+    assert quote.fee_data_source is DataSource.ESTIMATED
+    assert quote.time_data_source is DataSource.ESTIMATED
+    assert quote.fx_data_source is DataSource.ESTIMATED
 
 
 async def test_more_hops_increase_fee_and_time_proportionally() -> None:
@@ -96,6 +99,24 @@ def test_supported_currencies_returns_mvp_currency_set() -> None:
     network = SWIFTNetwork()
 
     assert network.supported_currencies() == {"USD", "EUR", "GBP", "CNY"}
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"num_hops": 0}, "num_hops"),
+        ({"hop_fixed_fee_usd": Decimal("-1")}, "hop_fixed_fee_usd"),
+        ({"hop_percentage_fee": Decimal("1.1")}, "hop_percentage_fee"),
+        ({"hop_time_hours": float("nan")}, "hop_time_hours"),
+        ({"hop_fx_spread": Decimal("1")}, "hop_fx_spread"),
+    ],
+)
+def test_constructor_rejects_invalid_scenario_parameters(
+    kwargs: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        SWIFTNetwork(**kwargs)
 
 
 async def test_zero_fees_and_zero_spread_reduce_to_mid_rate() -> None:

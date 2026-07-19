@@ -1,5 +1,8 @@
 from decimal import Decimal
 
+import pytest
+from pydantic import ValidationError
+
 from payment_router.core.models import DataSource, Hop, NetworkQuote, Route
 
 
@@ -57,3 +60,44 @@ def test_network_quote_model_tracks_data_source() -> None:
 
     assert quote.network_name == "wise"
     assert quote.data_source is DataSource.ESTIMATED
+    assert quote.provenance_sources == (DataSource.ESTIMATED,)
+
+
+def test_network_quote_tracks_mixed_metric_provenance() -> None:
+    quote = NetworkQuote(
+        network_name="wise",
+        fee_usd=Decimal("7.25"),
+        time_hours=Decimal("1.5"),
+        fx_rate=Decimal("0.915"),
+        data_source=DataSource.ESTIMATED,
+        fee_data_source=DataSource.ESTIMATED,
+        time_data_source=DataSource.VERIFIED,
+        fx_data_source=DataSource.VERIFIED,
+    )
+
+    assert quote.provenance_sources == (DataSource.VERIFIED, DataSource.ESTIMATED)
+
+
+def test_network_quote_rejects_overstated_summary_provenance() -> None:
+    with pytest.raises(ValidationError, match="least-trusted"):
+        NetworkQuote(
+            network_name="wise",
+            fee_usd=Decimal("7.25"),
+            time_hours=Decimal("1.5"),
+            fx_rate=Decimal("0.915"),
+            data_source=DataSource.VERIFIED,
+            fee_data_source=DataSource.ESTIMATED,
+            time_data_source=DataSource.VERIFIED,
+            fx_data_source=DataSource.VERIFIED,
+        )
+
+
+def test_network_quote_rejects_non_finite_values() -> None:
+    with pytest.raises(ValidationError):
+        NetworkQuote(
+            network_name="invalid",
+            fee_usd=Decimal("Infinity"),
+            time_hours=Decimal("1"),
+            fx_rate=Decimal("1"),
+            data_source=DataSource.ESTIMATED,
+        )

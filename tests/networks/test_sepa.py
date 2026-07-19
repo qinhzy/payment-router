@@ -20,7 +20,10 @@ async def test_default_sct_quote_for_eur_to_eur() -> None:
     assert quote.fee_usd == Decimal("0.27")
     assert quote.time_hours == Decimal("24.0")
     assert quote.fx_rate == Decimal("1.0")
-    assert quote.data_source is DataSource.INDUSTRY_AVERAGE
+    assert quote.data_source is DataSource.ESTIMATED
+    assert quote.fee_data_source is DataSource.ESTIMATED
+    assert quote.time_data_source is DataSource.VERIFIED
+    assert quote.fx_data_source is DataSource.VERIFIED
 
 
 async def test_instant_quote_for_eur_to_eur() -> None:
@@ -31,8 +34,10 @@ async def test_instant_quote_for_eur_to_eur() -> None:
     assert quote is not None
     assert quote.network_name == "SEPA Instant"
     assert quote.fee_usd == Decimal("0.54")
-    assert quote.time_hours == Decimal("0.003")
-    assert quote.data_source is DataSource.INDUSTRY_AVERAGE
+    assert quote.time_hours == Decimal("10") / Decimal("3600")
+    assert quote.data_source is DataSource.ESTIMATED
+    assert quote.fee_data_source is DataSource.ESTIMATED
+    assert quote.time_data_source is DataSource.VERIFIED
 
 
 async def test_non_eur_source_corridor_returns_none() -> None:

@@ -29,6 +29,7 @@
 - `src/payment_router/core/models.py`：`Hop`、`Route`、`NetworkQuote` 等核心模型
 - `src/payment_router/core/graph.py`：从 networks 构造 `networkx` 图
 - `src/payment_router/router.py`：路由算法
+- `src/payment_router/provenance.py`：可审计的数据来源与假设注册表
 - `src/payment_router/visualizer.py`：Mermaid 输出
 - `src/payment_router/cli.py`：Typer CLI 入口
 - `tests/`：镜像 `src/` 的测试结构
@@ -37,8 +38,16 @@
 
 - 每条费率、时效、汇率数据都必须显式标注 `data_source`
 - 允许的来源级别只有：`VERIFIED`、`INDUSTRY_AVERAGE`、`ESTIMATED`
+- fee、time、FX 分项标注；quote 汇总等级必须等于三者中可信度最低者
 - 禁止使用未标注来源的数据进入模型、测试或示例
 - 对外说明时必须注明这是 simulator，不代表真实生产报价或清算承诺
+
+## 路由不变量
+
+- 平行支付网络必须保留为独立边，top-N 不得按货币节点路径合并
+- 同币种支付网络使用 self-loop；不得把实际转账静默当成零费用换汇
+- 每条候选路径必须按逐跳余额重放，余额无法覆盖下一跳费用时拒绝该路径
+- Mermaid 中间余额必须使用与 router 相同的逐跳计算公式
 
 ## 工作规则
 
