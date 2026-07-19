@@ -70,6 +70,23 @@ A path is rejected when the current balance cannot strictly cover its fee. The
 visualizer uses the same recurrence, so intermediate diagram balances match the
 router rather than a cumulative-fee approximation.
 
+## Frontends
+
+The CLI and the web console are thin rendering layers over one shared service
+module (`service.py`). It owns request validation, network instantiation,
+graph construction, and profile-to-preference mapping, so both frontends
+always agree on routing behavior and error messages.
+
+- `cli.py` renders Rich tables, panels, and Mermaid source in the terminal.
+- `web/app.py` is a FastAPI application (optional `web` extra) exposing
+  `/api/meta`, `/api/route`, `/api/decide`, and `/api/sources`, and serving the
+  static single-page console from `web/static/`. JSON amounts reuse the exact
+  CLI formatting helpers, so both frontends display identical numbers.
+
+The web console is a local tool started with `remit serve`; it is not a
+deployment target and adds no authentication, persistence, or payment
+initiation surface.
+
 ## Invariants
 
 - amounts and numeric quote values are finite and non-negative;

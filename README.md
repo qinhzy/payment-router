@@ -38,11 +38,33 @@ uv run remit route USD CNY 1000 --top-n=3
 uv run remit decide USD CNY 1000
 uv run remit route EUR EUR 1000 --top-n=3
 uv run remit sources
+uv run remit serve
 ```
 
 The CLI renders a selected route, hop-by-hop fees and timing, recipient amount,
 and a Mermaid diagram. `decide` compares cheapest, fastest, and balanced
 profiles against the same graph.
+
+## Web console
+
+`remit serve` starts a local web console at `http://127.0.0.1:8000` on top of
+the same routing engine the CLI uses:
+
+- corridor form with amount, currency swap, cheapest/fastest/balanced
+  preference, and top-1/3/5 candidates;
+- per-route stat tiles (recipient amount, total fees, estimated time), a
+  hop-by-hop flow diagram with live intermediate balances, and copyable
+  Mermaid source;
+- a side-by-side decision board for the three profiles with the same tradeoff
+  note the CLI prints;
+- provenance badges on every route and hop, provider warnings, and the full
+  auditable source registry;
+- light/dark themes; the page is fully self-contained with no CDN or external
+  requests.
+
+The JSON API behind it is documented at `/api/docs` (`/api/meta`, `/api/route`,
+`/api/decide`, `/api/sources`). The console is a local tool, not a deployment
+target: it adds no authentication, persistence, or payment initiation surface.
 
 ## What is implemented
 
@@ -59,8 +81,10 @@ profiles against the same graph.
   invalid-response isolation, and fallback to the next fundable route.
 - **Explanations:** terminal decision board, Markdown comparisons, and Mermaid
   route diagrams.
+- **Web console:** optional FastAPI backend plus a dependency-free single-page
+  frontend sharing the CLI's routing service layer (`remit serve`).
 - **Quality:** Python 3.11-3.13 CI, strict pytest configuration, expanded Ruff
-  rules, package-build validation, and 100 automated tests.
+  rules, package-build validation, and 111 automated tests.
 
 ## Quick start
 
@@ -115,7 +139,12 @@ src/payment_router/
 |-- router.py          # single-route and edge-distinct top-N routing
 |-- decision.py        # cheapest/fastest/balanced comparison
 |-- provenance.py      # auditable evidence registry
+|-- service.py         # shared request/session layer for CLI and web
 |-- visualizer.py      # Mermaid and Markdown rendering
+|-- web/
+|   |-- app.py         # FastAPI API + static console (optional `web` extra)
+|   |-- schemas.py     # JSON views reusing the CLI's number formatting
+|   `-- static/        # self-contained single-page frontend
 `-- cli.py             # Typer/Rich command-line interface
 ```
 
@@ -136,11 +165,13 @@ The detailed algorithm, invariants, and boundaries are documented in
 
 ## Roadmap
 
-- **v0.3:** pluggable ECB/Frankfurter FX provider with cached, reproducible
+- **v0.3:** local web console over a shared routing service layer (this
+  release).
+- **v0.4:** pluggable ECB/Frankfurter FX provider with cached, reproducible
   snapshots and explicit fallback behavior.
-- **v0.4:** independent multi-hop timing model and sensitivity analysis.
-- **v0.5:** source-backed corridor expansion and an RMB-focused CIPS scenario.
-- **v0.6:** historical comparison without turning the simulator into an online
+- **v0.5:** independent multi-hop timing model and sensitivity analysis.
+- **v0.6:** source-backed corridor expansion and an RMB-focused CIPS scenario.
+- **v0.7:** historical comparison without turning the simulator into an online
   payment service.
 
 ## Contributing and security

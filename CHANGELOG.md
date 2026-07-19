@@ -3,6 +3,28 @@
 All notable user-visible changes are recorded here. The project follows
 [Semantic Versioning](https://semver.org/) while it approaches a stable API.
 
+## [0.3.0] - Unreleased
+
+### Added
+
+- local web console (`remit serve`): corridor form, per-route stat tiles,
+  hop-by-hop flow diagram with intermediate balances, decision board,
+  provenance badges, provider warnings, sources registry, light/dark themes;
+- FastAPI JSON API (`/api/meta`, `/api/route`, `/api/decide`, `/api/sources`)
+  behind an optional `web` extra, with OpenAPI docs at `/api/docs`;
+- shared `service` layer owning request validation, network instantiation, and
+  graph construction for both the CLI and the web API;
+- web API test suite with injectable fake networks (11 cases).
+
+### Changed
+
+- CLI internals now delegate to the shared service layer; behavior and output
+  are unchanged;
+- provider warning labels use the human-readable network name (`Wise` instead
+  of `WiseNetwork`);
+- amount and hour formatting helpers are shared between the CLI, Mermaid
+  output, and the web API so all frontends render identical numbers.
+
 ## [0.2.0] - Unreleased
 
 ### Added

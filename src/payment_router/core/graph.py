@@ -204,5 +204,4 @@ class PaymentGraph:
 
     @staticmethod
     def _network_label(network: PaymentNetwork) -> str:
-        name = getattr(network, "_name", None)
-        return str(name) if name else type(network).__name__
+        return network.display_name()
