@@ -238,6 +238,12 @@ LIVE_WISE_GBP_CNY_RESPONSE = {
 pytestmark = pytest.mark.anyio
 
 
+@pytest.mark.parametrize("timeout", [0, -1, float("nan"), float("inf")])
+def test_constructor_rejects_invalid_timeout(timeout: float) -> None:
+    with pytest.raises(ValueError, match="timeout_seconds"):
+        WiseNetwork(timeout_seconds=timeout)
+
+
 async def test_get_quote_returns_verified_quote_for_gbp_to_cny(
     httpx_mock: HTTPXMock,
 ) -> None:
@@ -255,7 +261,10 @@ async def test_get_quote_returns_verified_quote_for_gbp_to_cny(
     assert quote.fee_usd == Decimal("14.2875")
     assert quote.fx_rate == Decimal("9.21691")
     assert quote.time_hours == Decimal("0")
-    assert quote.data_source is DataSource.VERIFIED
+    assert quote.data_source is DataSource.ESTIMATED
+    assert quote.fee_data_source is DataSource.ESTIMATED
+    assert quote.time_data_source is DataSource.VERIFIED
+    assert quote.fx_data_source is DataSource.VERIFIED
 
     request = httpx_mock.get_requests()[0]
     assert request.url == httpx.URL(QUOTE_URL)

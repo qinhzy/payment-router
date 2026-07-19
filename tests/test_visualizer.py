@@ -66,6 +66,26 @@ def test_route_to_mermaid_connects_multi_hop_path() -> None:
 
     assert 'USD -->|"Wise<br/>fee: $2.00<br/>1.0h"| EUR' in mermaid
     assert 'EUR -->|"SWIFT<br/>fee: $3.00<br/>5.0h"| CNY' in mermaid
+    assert 'EUR["EUR<br/>78.40"]' in mermaid
+
+
+def test_route_to_mermaid_uses_distinct_nodes_for_same_currency_transfer() -> None:
+    route = Route(
+        hops=[_hop("EUR", "EUR", "SEPA Instant", "0.54", "0.003", "1.0")],
+        total_fee_usd=Decimal("0.54"),
+        total_time_hours=Decimal("0.003"),
+        source_currency="EUR",
+        target_currency="EUR",
+        source_amount=Decimal("100"),
+        final_amount=Decimal("99.50"),
+    )
+
+    mermaid = route_to_mermaid(route)
+
+    assert 'EUR_0["EUR<br/>100.00"]' in mermaid
+    assert 'EUR_1["EUR<br/>99.50"]' in mermaid
+    assert "EUR_0 -->" in mermaid
+    assert "| EUR_1" in mermaid
 
 
 def test_route_to_mermaid_for_zero_hop_route_renders_single_node() -> None:

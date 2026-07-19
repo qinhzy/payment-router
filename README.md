@@ -1,136 +1,155 @@
 # payment-router
 
-Multi-objective routing simulator for cross-border payments.
+[![CI](https://github.com/qinhzy/payment-router/actions/workflows/ci.yml/badge.svg)](https://github.com/qinhzy/payment-router/actions/workflows/ci.yml)
+![Python 3.11-3.13](https://img.shields.io/badge/Python-3.11--3.13-3776AB)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/qinhzy/payment-router/blob/main/LICENSE)
 
-Given a source currency, target currency, amount, and a cost/time preference, this tool builds a payment graph across Wise, SEPA, and SWIFT, then finds the best route with a weighted shortest-path search.
+Explainable, multi-objective routing simulator for cross-border payments.
 
-Not a production system. Every quote carries a `DataSource` label (`VERIFIED`, `INDUSTRY_AVERAGE`, or `ESTIMATED`) so the simulator explains where its numbers come from; the design goal is transparency over cleverness.
+Given a source currency, target currency, amount, and cost/time preference, the
+simulator builds a payment graph across Wise quotes, SEPA transfers, and an
+explicit SWIFT correspondent-banking scenario. It then compares direct and
+multi-hop routes without hiding where the numbers came from.
 
-## Demo
-
-```bash
-$ uv run remit route USD CNY 100
-+------------------------------ Selected Route -------------------------------+
-| Path: USD -> GBP -> CNY                                                     |
-| Total fee: $10.64                                                           |
-| Total time: 30.642 hours                                                    |
-| Final amount: 605.80 CNY                                                    |
-+-----------------------------------------------------------------------------+
-                   Hop Breakdown
-+-------------------------------------------------+
-| Hop | Network | Pair     | Fee (USD) | Time (h) |
-|-----+---------+----------+-----------+----------|
-| 1   | wise    | USD->GBP | $7.33     | 30.642   |
-| 2   | wise    | GBP->CNY | $3.31     | 0.0      |
-+-------------------------------------------------+
-+---------------------------------- Mermaid ----------------------------------+
-| flowchart LR                                                                |
-|     USD["USD<br/>100.00"]                                                   |
-|     GBP["GBP<br/>68.20"]                                                    |
-|     CNY["CNY<br/>605.80"]                                                   |
-|     USD -->|"wise<br/>fee: $7.33<br/>30.642h"| GBP                          |
-|     GBP -->|"wise<br/>fee: $3.31<br/>0.0h"| CNY                             |
-+-----------------------------------------------------------------------------+
-```
-
-The router can select a direct or multi-hop path based on normalized all-in cost and time. The sample is illustrative: live Wise quotes can change, while simulated networks remain explicitly source-labeled.
-
-### Rendered route diagram
-
-```mermaid
-flowchart LR
-    USD["USD<br/>100.00"]
-    GBP["GBP<br/>68.20"]
-    CNY["CNY<br/>605.80"]
-    USD -->|"wise<br/>fee: $7.33<br/>30.642h"| GBP
-    GBP -->|"wise<br/>fee: $3.31<br/>0.0h"| CNY
-```
+> [!IMPORTANT]
+> This is an early-stage teaching and research project, not a production quote,
+> transfer, compliance, or financial-advice system. Never use its output to
+> initiate or promise a real payment.
 
 ## Why this exists
 
-- SWIFT is not a single payment rail. It is a correspondent-bank chain where each hop can add fixed fees, percentage fees, FX spread, and delay, so headline transfer cost is often understated.
-- The best route can be indirect. A multi-hop Wise path can beat a direct SWIFT path on total cost, and a simple one-network price lookup will miss that structure.
-- Cost and speed trade off against each other. SEPA Instant can settle in about 10 seconds but only for `EUR -> EUR`, so users need a preference slider, not a single universal answer.
+Most public comparison tools show one provider's headline quote. Real
+cross-border transfers can accumulate fixed fees, percentage fees, FX spread,
+and delay across several institutions. `payment-router` makes that structure
+inspectable:
 
-## Features
+- parallel providers remain distinct instead of being collapsed into one edge;
+- cost, time, and recipient amount are shown together;
+- same-currency rails such as SEPA and SEPA Instant can be compared directly;
+- every fee, time, and FX component carries its own provenance classification;
+- live, source-backed, and teaching-assumption values are never presented as
+  equally certain.
 
-- Models three payment networks: Wise via the public guest quote API, SEPA as a rules engine, and SWIFT as a correspondent-bank simulator.
-- Uses multi-objective Dijkstra routing with adjustable `cost_weight` and `time_weight`, ranking all-in cost (fees plus FX spread) against time.
-- Enumerates top-N candidate routes with `shortest_simple_paths` for side-by-side comparison.
-- Provides a `decide` terminal decision board that evaluates cheapest, fastest, and balanced profiles against the same graph and explains the balanced trade-off.
-- Generates Mermaid flowcharts that can be pasted directly into GitHub or Notion.
-- Attaches a `DataSource` label to every quote so data provenance remains explicit.
-- Uses banker's rounding (`ROUND_HALF_EVEN`) for shared FX normalization, matching standard financial rounding practice.
-- Times out stalled network quotes and records the affected corridor without discarding healthy providers.
-- Rejects paths whose fixed fee would consume the live hop balance, then continues to the next feasible route.
-- Validates graph construction, fee currency conversion, all-in route ranking, CLI behavior, and every network model with an automated test suite.
+## Example
+
+```bash
+uv run remit route USD CNY 1000 --prefer=cheapest
+uv run remit route USD CNY 1000 --top-n=3
+uv run remit decide USD CNY 1000
+uv run remit route EUR EUR 1000 --top-n=3
+uv run remit sources
+```
+
+The CLI renders a selected route, hop-by-hop fees and timing, recipient amount,
+and a Mermaid diagram. `decide` compares cheapest, fastest, and balanced
+profiles against the same graph.
+
+## What is implemented
+
+- **Wise:** live unauthenticated quote fields from the public guest quote API.
+- **SEPA:** EUR-to-EUR SCT model with a source-backed one-business-day target
+  and an explicitly estimated sender fee.
+- **SEPA Instant:** EUR-to-EUR SCT Inst model with the source-backed 10-second
+  maximum and an explicitly estimated sender fee.
+- **SWIFT scenario:** configurable correspondent-hop simulation. The topology
+  is source-backed; all numeric hop parameters are labelled `ESTIMATED`.
+- **Routing:** normalized cost/time Dijkstra selection plus edge-expanded top-N
+  enumeration that preserves parallel payment networks.
+- **Resilience:** bounded concurrent quote collection, deterministic warnings,
+  invalid-response isolation, and fallback to the next fundable route.
+- **Explanations:** terminal decision board, Markdown comparisons, and Mermaid
+  route diagrams.
+- **Quality:** Python 3.11-3.13 CI, strict pytest configuration, expanded Ruff
+  rules, package-build validation, and 100 automated tests.
 
 ## Quick start
+
+Prerequisites: Python 3.11 or newer and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 git clone https://github.com/qinhzy/payment-router.git
 cd payment-router
 uv sync --dev
-uv run remit route USD CNY 100
-uv run remit route GBP EUR 500 --prefer=cheapest
-uv run remit route USD CNY 10000 --top-n=3
-uv run remit decide USD CNY 1000
-uv run remit decide USD CNY 1000 --show-diagrams
+uv run remit --version
 uv run remit networks
+uv run remit route USD CNY 100
 ```
+
+Run the full local verification suite:
+
+```bash
+uv run pytest -x
+uv run ruff check .
+uv run ruff format --check .
+uv build
+```
+
+## Provenance model
+
+`DataSource` has three deliberately narrow meanings:
+
+| Classification | Meaning |
+|---|---|
+| `VERIFIED` | Read from a live response or stated by the linked primary source |
+| `INDUSTRY_AVERAGE` | A documented aggregate or median with a reproducible citation |
+| `ESTIMATED` | A transparent teaching assumption or a value derived using one |
+
+The overall classification of a quote must equal its least-trusted component.
+For example, a Wise rate and ETA can be `VERIFIED`, while its normalized USD
+fee is `ESTIMATED` because the current simulator uses a frozen FX table for that
+conversion. The quote summary is therefore also `ESTIMATED`.
+
+See [Data sources and assumptions](https://github.com/qinhzy/payment-router/blob/main/docs/DATA_SOURCES.md) for the complete
+registry, source links, checked dates, values, and caveats. The same registry is
+available in the CLI with `remit sources`.
 
 ## Architecture
 
 ```text
 src/payment_router/
-|-- __init__.py        # package marker
-|-- networks/          # PaymentNetwork implementations
-|   |-- __init__.py    # package marker
-|   |-- base.py        # abstract interface
-|   |-- wise.py        # live Wise guest quote API
-|   |-- sepa.py        # SEPA rules engine (SCT + SCT Instant)
-|   `-- swift.py       # SWIFT correspondent bank model
-|-- core/              # shared models and graph construction
-|   |-- __init__.py    # package marker
-|   |-- models.py      # Quote, Route, Hop (pydantic v2)
-|   |-- fx.py          # unified mid-rate source
-|   `-- graph.py       # PaymentGraph (networkx MultiDiGraph)
-|-- router.py          # multi-objective Dijkstra routing
-|-- decision.py        # multi-profile decision board and trade-off explanation
-|-- visualizer.py      # Mermaid + Markdown table generation
-`-- cli.py             # Typer CLI with Rich output
+|-- networks/          # Wise, SEPA, and SWIFT adapters/models
+|-- core/
+|   |-- models.py      # quote, hop, route, and metric provenance models
+|   |-- fx.py          # frozen FX normalization table
+|   `-- graph.py       # concurrent MultiDiGraph construction
+|-- router.py          # single-route and edge-distinct top-N routing
+|-- decision.py        # cheapest/fastest/balanced comparison
+|-- provenance.py      # auditable evidence registry
+|-- visualizer.py      # Mermaid and Markdown rendering
+`-- cli.py             # Typer/Rich command-line interface
 ```
 
-## Data sources & honesty
-
-Every quote in the system carries a `data_source` field. The simulator does not pretend all numbers are equally trustworthy, and it does not hide when a result comes from a live API versus an industry median.
-
-| Source | Meaning | Example |
-|---|---|---|
-| VERIFIED | From a live public API | Wise guest quote endpoint |
-| INDUSTRY_AVERAGE | Documented median of published industry data | SWIFT correspondent bank fees, SEPA SCT median |
-| ESTIMATED | Reasoned projection with caveats | Reserved for future extensions |
-
-No quote is synthesized without disclosure.
+The detailed algorithm, invariants, and boundaries are documented in
+[Architecture](https://github.com/qinhzy/payment-router/blob/main/docs/ARCHITECTURE.md).
 
 ## Known limitations
 
-- **Wise multi-hop time estimation**: In multi-hop Wise routes, the second hop and beyond can show `time_hours = 0` because the Wise API returns delivery timing relative to an already funded balance. The current implementation can therefore slightly underestimate total multi-hop Wise time. Future fix plan: add an independent time estimation layer under `core/` in v2.
-- **Four supported currencies**: The current MVP only supports `USD`, `EUR`, `GBP`, and `CNY`. Adding a new currency is mechanically small in `core/fx.py`, but every new corridor still needs verified source coverage. Future fix plan: expand the currency set only alongside source-backed corridor validation.
-- **Static FX mid-rates**: The mid-rates in `core/fx.py` are manually checked and then frozen for repeatable simulation. That is acceptable for ranking paths, but not for production pricing. Future fix plan: plug in a live FX provider such as Frankfurter or ECB reference rates.
-- **Quote sizing approximation**: Each corridor is quoted at the market-equivalent value of the source amount. Fees and FX are then applied hop by hop to the final amount, but a later live quote can still differ slightly because the exact amount arriving at that hop is path-dependent.
+- Only `USD`, `EUR`, `GBP`, and `CNY` are supported.
+- Frozen FX mid-rates make runs reproducible but not market-current.
+- The graph quotes each corridor at the source-equivalent amount; later-hop
+  live quotes can differ because the actual arriving amount is path-dependent.
+- Wise delivery estimates for an already funded balance can understate the time
+  of later hops in a simulated multi-hop route.
+- SEPA and SWIFT fees are scenario assumptions, not bank tariffs.
+- Geography, bank participation, compliance, holidays, cut-off times, and
+  liquidity are outside the MVP model.
 
 ## Roadmap
 
-- **v0.3**: Integrate Frankfurter live FX rates so route ranking can use current market references.
-- **v0.4**: Add a historical volatility overlay to compare route quality under changing FX conditions.
-- **v0.5**: Introduce a CIPS network model for RMB-focused corridor analysis.
-- **v0.6**: Add terminal what-if sensitivity analysis without turning the simulator into an online payment service.
+- **v0.3:** pluggable ECB/Frankfurter FX provider with cached, reproducible
+  snapshots and explicit fallback behavior.
+- **v0.4:** independent multi-hop timing model and sensitivity analysis.
+- **v0.5:** source-backed corridor expansion and an RMB-focused CIPS scenario.
+- **v0.6:** historical comparison without turning the simulator into an online
+  payment service.
 
-## Tech stack
+## Contributing and security
 
-Python 3.11 / uv / pydantic v2 / networkx / typer / httpx / pytest / ruff
+Contributions are welcome. Read [CONTRIBUTING.md](https://github.com/qinhzy/payment-router/blob/main/CONTRIBUTING.md), especially
+the evidence requirements for financial assumptions. Security reports should
+follow [SECURITY.md](https://github.com/qinhzy/payment-router/blob/main/SECURITY.md). User-visible changes are recorded in
+[CHANGELOG.md](https://github.com/qinhzy/payment-router/blob/main/CHANGELOG.md).
 
 ## License
 
-MIT - see LICENSE.
+[MIT](https://github.com/qinhzy/payment-router/blob/main/LICENSE)

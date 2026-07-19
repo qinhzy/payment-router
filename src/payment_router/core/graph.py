@@ -21,9 +21,12 @@ class NetworkEdge:
     from_currency: str
     to_currency: str
     fee_usd: Decimal
-    time_hours: float
+    time_hours: Decimal
     fx_rate: Decimal
     data_source: DataSource
+    fee_data_source: DataSource
+    time_data_source: DataSource
+    fx_data_source: DataSource
     amount_at_send: Decimal
 
 
@@ -62,13 +65,21 @@ class PaymentGraph:
         self.graph.add_nodes_from(self._currencies)
         self._build_errors = []
 
-        tasks = [
-            self._build_edge(network, from_currency, to_currency)
-            for network in self._networks
-            for from_currency in self._currencies
-            for to_currency in self._currencies
-            if from_currency != to_currency
-        ]
+        tasks = []
+        for network in self._networks:
+            try:
+                supported = {
+                    currency.strip().upper() for currency in network.supported_currencies()
+                }
+            except Exception as exc:
+                self._build_errors.append((self._network_label(network), "*", "*", exc))
+                continue
+            tasks.extend(
+                self._build_edge(network, from_currency, to_currency)
+                for from_currency in self._currencies
+                for to_currency in self._currencies
+                if from_currency in supported and to_currency in supported
+            )
         await asyncio.gather(*tasks)
         self._build_errors.sort(
             key=lambda item: (item[0], item[1], item[2], type(item[3]).__name__, str(item[3]))
@@ -92,7 +103,16 @@ class PaymentGraph:
             if isinstance(edge, NetworkEdge):
                 edges.append(edge)
 
-        return edges
+        return sorted(
+            edges,
+            key=lambda edge: (
+                edge.network_name,
+                edge.fee_usd,
+                edge.time_hours,
+                edge.fx_rate,
+                edge.data_source.value,
+            ),
+        )
 
     def all_nodes(self) -> set[str]:
         return set(self.graph.nodes)
@@ -106,6 +126,9 @@ class PaymentGraph:
 
         if source_currency not in self.graph or target_currency not in self.graph:
             return False
+
+        if source_currency == target_currency:
+            return self.graph.has_edge(source_currency, target_currency)
 
         return nx.has_path(self.graph, source_currency, target_currency)
 
@@ -140,9 +163,12 @@ class PaymentGraph:
             from_currency=from_currency,
             to_currency=to_currency,
             fee_usd=quote.fee_usd,
-            time_hours=float(quote.time_hours),
+            time_hours=quote.time_hours,
             fx_rate=quote.fx_rate,
             data_source=quote.data_source,
+            fee_data_source=quote.fee_data_source,
+            time_data_source=quote.time_data_source,
+            fx_data_source=quote.fx_data_source,
             amount_at_send=quote_amount,
         )
         self.graph.add_edge(from_currency, to_currency, edge=edge)

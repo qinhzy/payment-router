@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import tomllib
 from decimal import Decimal, InvalidOperation
-from pathlib import Path
+from importlib.metadata import version as distribution_version
 from typing import Annotated
 
 import typer
@@ -24,6 +23,7 @@ from payment_router.networks.base import PaymentNetwork
 from payment_router.networks.sepa import SEPANetwork
 from payment_router.networks.swift import SWIFTNetwork
 from payment_router.networks.wise import WiseNetwork
+from payment_router.provenance import PROVENANCE_RECORDS
 from payment_router.router import PaymentRouter, RoutingPreference
 from payment_router.visualizer import route_to_mermaid, routes_to_comparison_table
 
@@ -38,10 +38,7 @@ error_console = Console(stderr=True)
 
 
 def _read_version() -> str:
-    pyproject_path = Path(__file__).resolve().parents[2] / "pyproject.toml"
-    with pyproject_path.open("rb") as file:
-        project_data = tomllib.load(file)
-    return str(project_data["project"]["version"])
+    return distribution_version("payment-router")
 
 
 def _version_callback(value: bool) -> None:
@@ -168,8 +165,32 @@ def networks_command() -> None:
     console.print(table)
 
 
+@app.command("sources")
+def sources_command() -> None:
+    """Show the auditable source and assumption registry."""
+    table = Table(title="Data Provenance Registry", header_style="bold white")
+    table.add_column("Evidence ID", style="cyan", no_wrap=True)
+    table.add_column("Network")
+    table.add_column("Class")
+    table.add_column("Checked")
+
+    for record in PROVENANCE_RECORDS:
+        table.add_row(
+            record.evidence_id,
+            record.network,
+            record.classification.value,
+            record.checked_on,
+        )
+
+    console.print(table)
+    console.print(
+        "References and caveats: "
+        "https://github.com/qinhzy/payment-router/blob/main/docs/DATA_SOURCES.md"
+    )
+
+
 def _instantiate_networks() -> list[PaymentNetwork]:
-    return [WiseNetwork(), SEPANetwork(), SWIFTNetwork()]
+    return [WiseNetwork(), SEPANetwork(), SEPANetwork(instant=True), SWIFTNetwork()]
 
 
 def _supported_currencies(networks: list[PaymentNetwork]) -> set[str]:

@@ -1,0 +1,32 @@
+name: Feature request
+description: Propose a bounded teaching or research improvement
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or research question
+      description: Explain the gap without prescribing an implementation first.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed model behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Primary sources and assumptions
+      description: Link primary evidence and identify anything that must be ESTIMATED.
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope confirmation
+      options:
+        - label: This does not execute payments or claim production pricing.
+          required: true

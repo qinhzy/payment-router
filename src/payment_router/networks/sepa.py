@@ -7,8 +7,8 @@ Data sources (verified 2026-04-19):
 - European Payments Council SCT Inst public scheme page:
   https://www.europeanpaymentscouncil.eu/what-we-do/sepa-payment-schemes/sepa-instant-credit-transfer
 
-Fee assumptions in this module are industry medians for simulator use only and
-are not any single bank's live quotation.
+The scheme timing is source-backed. Fee values are explicit simulator
+assumptions because the EPC scheme does not set end-user bank pricing.
 """
 
 from __future__ import annotations
@@ -22,12 +22,13 @@ from payment_router.networks.base import PaymentNetwork
 SCT_FEE_EUR = Decimal("0.25")
 SCT_INST_FEE_EUR = Decimal("0.50")
 SCT_TIME_HOURS = Decimal("24.0")
-SCT_INST_TIME_HOURS = Decimal("0.003")
+SCT_INST_TIME_HOURS = Decimal("10") / Decimal("3600")
 
 
 class SEPANetwork(PaymentNetwork):
     def __init__(self, instant: bool = False) -> None:
         self._instant = instant
+        self._name = "SEPA Instant" if instant else "SEPA"
 
     async def get_quote(
         self,
@@ -44,14 +45,16 @@ class SEPANetwork(PaymentNetwork):
 
         fee_eur = SCT_INST_FEE_EUR if self._instant else SCT_FEE_EUR
         time_hours = SCT_INST_TIME_HOURS if self._instant else SCT_TIME_HOURS
-        network_name = "SEPA Instant" if self._instant else "SEPA"
 
         return NetworkQuote(
-            network_name=network_name,
+            network_name=self._name,
             fee_usd=fx.to_usd(fee_eur, "EUR"),
             time_hours=time_hours,
             fx_rate=Decimal("1.0"),
-            data_source=DataSource.INDUSTRY_AVERAGE,
+            data_source=DataSource.ESTIMATED,
+            fee_data_source=DataSource.ESTIMATED,
+            time_data_source=DataSource.VERIFIED,
+            fx_data_source=DataSource.VERIFIED,
         )
 
     def supported_currencies(self) -> set[str]:

@@ -174,6 +174,41 @@ async def test_same_currency_returns_zero_hop_route() -> None:
     assert route.final_amount == Decimal("25")
 
 
+async def test_same_currency_routes_compare_parallel_payment_rails() -> None:
+    router = await _build_router(
+        networks=[
+            FakeNetwork(
+                "standard",
+                {"EUR"},
+                {("EUR", "EUR"): _quote("SEPA", "0.27", "24", "1.0")},
+            ),
+            FakeNetwork(
+                "instant",
+                {"EUR"},
+                {("EUR", "EUR"): _quote("SEPA Instant", "0.54", "0.003", "1.0")},
+            ),
+        ],
+        currencies=["EUR"],
+        amount=Decimal("100"),
+    )
+
+    cheapest = router.find_cheapest("EUR", "EUR", Decimal("100"))
+    fastest = router.find_fastest("EUR", "EUR", Decimal("100"))
+    routes = router.find_all_routes(
+        "EUR",
+        "EUR",
+        Decimal("100"),
+        RoutingPreference(cost_weight=0.5, time_weight=0.5),
+        top_n=2,
+    )
+
+    assert cheapest is not None
+    assert fastest is not None
+    assert cheapest.hops[0].network_name == "SEPA"
+    assert fastest.hops[0].network_name == "SEPA Instant"
+    assert {route.hops[0].network_name for route in routes} == {"SEPA", "SEPA Instant"}
+
+
 async def test_disconnected_target_returns_none() -> None:
     router = await _build_router(
         networks=[
@@ -270,6 +305,35 @@ async def test_parallel_edges_choose_cheapest_option() -> None:
 
     assert route is not None
     assert route.hops[0].network_name == "Wise"
+
+
+async def test_find_all_routes_preserves_parallel_network_options() -> None:
+    router = await _build_router(
+        networks=[
+            FakeNetwork(
+                "wise",
+                {"USD", "CNY"},
+                {("USD", "CNY"): _quote("Wise", "5", "1", "7.0")},
+            ),
+            FakeNetwork(
+                "swift",
+                {"USD", "CNY"},
+                {("USD", "CNY"): _quote("SWIFT", "20", "30", "6.8")},
+            ),
+        ],
+        currencies=["USD", "CNY"],
+        amount=Decimal("100"),
+    )
+
+    routes = router.find_all_routes(
+        "USD",
+        "CNY",
+        Decimal("100"),
+        RoutingPreference(cost_weight=0.5, time_weight=0.5),
+        top_n=2,
+    )
+
+    assert [route.hops[0].network_name for route in routes] == ["Wise", "SWIFT"]
 
 
 async def test_two_hop_route_is_found_when_no_direct_path_exists() -> None:

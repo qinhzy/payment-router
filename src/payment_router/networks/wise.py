@@ -12,9 +12,10 @@ Data source verification:
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Mapping
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -39,6 +40,8 @@ class WiseAPIError(RuntimeError):
 
 class WiseNetwork(PaymentNetwork):
     def __init__(self, timeout_seconds: float = 10.0) -> None:
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be a positive finite number")
         self._timeout_seconds = timeout_seconds
 
     async def get_quote(
@@ -106,7 +109,12 @@ class WiseNetwork(PaymentNetwork):
             fee_usd=fx.to_usd(fee_total_source, source_currency),
             time_hours=time_hours,
             fx_rate=fx_rate,
-            data_source=DataSource.VERIFIED,
+            # The provider fields are live, but converting a non-USD fee into
+            # the simulator's common USD score uses the frozen FX table.
+            data_source=DataSource.ESTIMATED,
+            fee_data_source=DataSource.ESTIMATED,
+            time_data_source=DataSource.VERIFIED,
+            fx_data_source=DataSource.VERIFIED,
         )
 
     def supported_currencies(self) -> set[str]:
@@ -208,7 +216,7 @@ class WiseNetwork(PaymentNetwork):
             normalized = normalized[:-5] + normalized[-5:-2] + ":" + normalized[-2:]
 
         parsed = datetime.fromisoformat(normalized)
-        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
     @classmethod
     def _parse_formatted_delivery(
@@ -251,7 +259,7 @@ class WiseNetwork(PaymentNetwork):
 
     @staticmethod
     def _parse_by_day_label(label: str, created_time: datetime) -> datetime:
-        created_utc = created_time.astimezone(timezone.utc)
+        created_utc = created_time.astimezone(UTC)
 
         for date_format in ("%A, %B %d", "%A, %b %d", "%B %d", "%b %d"):
             try:
@@ -266,7 +274,7 @@ class WiseNetwork(PaymentNetwork):
                 hour=23,
                 minute=59,
                 second=59,
-                tzinfo=timezone.utc,
+                tzinfo=UTC,
             )
             if candidate < created_utc:
                 candidate = candidate.replace(year=candidate.year + 1)
@@ -294,5 +302,5 @@ class WiseNetwork(PaymentNetwork):
             hour=23,
             minute=59,
             second=59,
-            tzinfo=timezone.utc,
+            tzinfo=UTC,
         )

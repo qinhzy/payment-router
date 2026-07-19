@@ -25,7 +25,7 @@ class RouteDecision:
 
     @property
     def evidence(self) -> str:
-        sources = {hop.data_source for hop in self.route.hops}
+        sources = {source for hop in self.route.hops for source in hop.provenance_sources}
         if not sources:
             return "NO_HOPS"
         if len(sources) == 1:

@@ -5,9 +5,25 @@ build-backend = "hatchling.build"
 [project]
 name = "payment-router"
 version = "0.2.0"
-description = "Teaching-oriented CLI simulator for cross-border payment routing."
+description = "Explainable multi-objective simulator for cross-border payment routing."
 readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "qinhzy" }]
+keywords = ["payments", "routing", "fintech", "simulation", "cross-border"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial",
+]
 dependencies = [
     "networkx>=3.3,<4.0",
     "typer>=0.12,<1.0",
@@ -18,6 +34,12 @@ dependencies = [
 [project.scripts]
 payment-router = "payment_router.cli:app"
 remit = "payment_router.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/qinhzy/payment-router"
+Repository = "https://github.com/qinhzy/payment-router"
+Issues = "https://github.com/qinhzy/payment-router/issues"
+Changelog = "https://github.com/qinhzy/payment-router/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = [
@@ -31,10 +53,11 @@ packages = ["src/payment_router"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = ["--strict-config", "--strict-markers"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "I"]
+select = ["B", "E", "F", "I", "SIM", "UP"]
