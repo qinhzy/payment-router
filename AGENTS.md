@@ -10,6 +10,8 @@
 - 四个货币：当前默认 `USD`、`EUR`、`GBP`、`CNY`
 - 支持输出 Mermaid 路由可视化
 - 本地 Web 控制台（`remit serve`）：FastAPI API + 静态单页前端
+- 可选 AI 解读：仅在 Anthropic 凭证可解析时启用；解读必须严格基于控制台
+  展示的 JSON，保留教学模拟器免责声明，不得编造数字
 - 不做用户系统
 
 ## 技术栈与版本
@@ -20,7 +22,8 @@
 - `typer` 用于 CLI
 - `pydantic v2` 用于数据模型
 - `httpx` 仅用于后续 Wise 网络请求
-- `fastapi` + `uvicorn` 仅在可选 `web` extra 中，用于本地 Web 控制台
+- `fastapi` + `uvicorn` + `anthropic` 仅在可选 `web` extra 中，用于本地
+  Web 控制台与可选 AI 解读
 - `pytest` + `pytest-httpx` 用于测试
 - `ruff` 用于 lint
 

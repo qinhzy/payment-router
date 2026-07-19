@@ -20,8 +20,15 @@ All notable user-visible changes are recorded here. The project follows
 - shareable console URLs with browser history support, recent-search chips,
   and a fee/time profile-comparison chart when profiles disagree;
 - `remit serve --open` flag and `python -m payment_router` entry point;
-- web API test suite with injectable fake networks (15 cases) and a
-  service-layer unit test suite (12 cases).
+- optional AI insight panel: `POST /api/explain` streams a Claude-generated,
+  provenance-aware reading of the displayed result over server-sent events,
+  grounded strictly in the console's JSON and carrying the simulator
+  disclaimer; enabled only when Anthropic credentials resolve (default model
+  `claude-opus-4-8`, override with `PAYMENT_ROUTER_AI_MODEL`);
+- console motion polish: entrance animations, stat count-ups, animated flow
+  arrows, and hover elevation, all disabled under reduced-motion preferences;
+- web API test suite with injectable fake networks and explainers (21 cases)
+  and a service-layer unit test suite (12 cases).
 
 ### Changed
 

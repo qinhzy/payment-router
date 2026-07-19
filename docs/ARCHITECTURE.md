@@ -88,6 +88,13 @@ always agree on routing behavior and error messages.
   successful builds are cached, responses expose `quoted_at`/`from_cache`
   metadata, and a TTL of zero disables the cache. The CLI always builds fresh.
 
+- `web/ai.py` is the optional AI layer: when Anthropic credentials resolve,
+  `POST /api/explain` streams a Claude-generated reading of the displayed
+  result over server-sent events. The prompt grounds the model strictly in
+  the console's JSON, surfaces provenance caveats, and pins the simulator
+  disclaimer; without credentials the endpoint returns 503 and the console
+  hides the panel.
+
 The web console is a local tool started with `remit serve`; it is not a
 deployment target and adds no authentication, persistence, or payment
 initiation surface.

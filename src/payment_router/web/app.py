@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import json
 import time
 from asyncio import Lock
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib.metadata import version as distribution_version
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal, Protocol
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from payment_router import service
 from payment_router.decision import DecisionProfile, build_decision_board, summarize_tradeoff
@@ -35,6 +38,35 @@ _CurrencyParam = Annotated[str, Query(min_length=3, max_length=3)]
 _AmountParam = Annotated[str, Query(description="Amount to send, as a decimal string.")]
 
 _CacheKey = tuple[str, str, str]
+
+
+class Explainer(Protocol):
+    """The AI explainer surface the app depends on (see ``web.ai``)."""
+
+    @property
+    def model(self) -> str: ...
+
+    def stream_explanation(
+        self,
+        kind: str,
+        payload: dict[str, object],
+        lang: str,
+    ) -> AsyncIterator[str]: ...
+
+
+ExplainerFactory = Callable[[], "Explainer | None"]
+
+
+def _default_explainer() -> Explainer | None:
+    from payment_router.web.ai import AIExplainer
+
+    return AIExplainer.try_create()
+
+
+class ExplainRequest(BaseModel):
+    kind: Literal["route", "decide"]
+    data: dict[str, object]
+    lang: str = Field(default="en", max_length=35)
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +135,7 @@ class _SessionCache:
 def create_app(
     networks_factory: NetworksFactory = service.default_networks,
     quote_ttl_seconds: float = DEFAULT_QUOTE_TTL_SECONDS,
+    explainer_factory: ExplainerFactory = _default_explainer,
 ) -> FastAPI:
     application = FastAPI(
         title="payment-router console",
@@ -112,6 +145,7 @@ def create_app(
         redoc_url=None,
     )
     cache = _SessionCache(ttl_seconds=quote_ttl_seconds)
+    explainer = explainer_factory()
 
     async def build_session(
         source: str,
@@ -162,6 +196,10 @@ def create_app(
                 for network in networks
             ],
             "profiles": [profile.value for profile in DecisionProfile],
+            "ai": {
+                "enabled": explainer is not None,
+                "model": explainer.model if explainer is not None else None,
+            },
         }
 
     @application.get("/api/route")
@@ -232,6 +270,38 @@ def create_app(
             "tradeoff": schemas.tradeoff_to_json(tradeoff) if tradeoff is not None else None,
             "warnings": [schemas.warning_to_json(warning) for warning in session.warnings],
         }
+
+    @application.post("/api/explain")
+    async def explain(request: ExplainRequest) -> StreamingResponse:
+        if explainer is None:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "AI explanations are not configured. Set ANTHROPIC_API_KEY "
+                    "(or sign in with `ant auth login`) and restart the console."
+                ),
+            )
+
+        def sse_event(event: dict[str, object]) -> str:
+            return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+        async def event_stream() -> AsyncIterator[str]:
+            try:
+                async for text in explainer.stream_explanation(
+                    request.kind,
+                    request.data,
+                    request.lang,
+                ):
+                    yield sse_event({"type": "delta", "text": text})
+                yield sse_event({"type": "done", "model": explainer.model})
+            except Exception as error:
+                yield sse_event({"type": "error", "message": str(error)[:500]})
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
 
     @application.get("/api/sources")
     async def sources() -> dict[str, object]:

@@ -33,6 +33,7 @@ dependencies = [
 
 [project.optional-dependencies]
 web = [
+    "anthropic>=0.100,<1.0",
     "fastapi>=0.115,<1.0",
     "uvicorn>=0.30,<1.0",
 ]
