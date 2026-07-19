@@ -240,3 +240,64 @@ def test_console_index_is_served_at_root() -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     assert "payment-router" in response.text
+
+
+class _CountingFactory:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def __call__(self) -> list[PaymentNetwork]:
+        self.calls += 1
+        return _stub_networks()
+
+
+def test_route_reuses_cached_session_within_ttl() -> None:
+    factory = _CountingFactory()
+    client = TestClient(create_app(networks_factory=factory, quote_ttl_seconds=60.0))
+    params = {"source": "USD", "target": "CNY", "amount": "100"}
+
+    first = client.get("/api/route", params=params)
+    second = client.get("/api/route", params={**params, "profile": "fastest", "top_n": 3})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert factory.calls == 1
+    assert first.json()["quotes"]["from_cache"] is False
+    assert second.json()["quotes"]["from_cache"] is True
+    assert second.json()["quotes"]["quoted_at"] == first.json()["quotes"]["quoted_at"]
+
+
+def test_route_rebuilds_for_different_amount() -> None:
+    factory = _CountingFactory()
+    client = TestClient(create_app(networks_factory=factory, quote_ttl_seconds=60.0))
+
+    client.get("/api/route", params={"source": "USD", "target": "CNY", "amount": "100"})
+    client.get("/api/route", params={"source": "USD", "target": "CNY", "amount": "250"})
+
+    assert factory.calls == 2
+
+
+def test_zero_ttl_disables_session_cache() -> None:
+    factory = _CountingFactory()
+    client = TestClient(create_app(networks_factory=factory, quote_ttl_seconds=0))
+    params = {"source": "USD", "target": "CNY", "amount": "100"}
+
+    first = client.get("/api/route", params=params)
+    second = client.get("/api/route", params=params)
+
+    assert factory.calls == 2
+    assert first.json()["quotes"]["from_cache"] is False
+    assert second.json()["quotes"]["from_cache"] is False
+
+
+def test_decide_shares_cache_with_route() -> None:
+    factory = _CountingFactory()
+    client = TestClient(create_app(networks_factory=factory, quote_ttl_seconds=60.0))
+    params = {"source": "USD", "target": "CNY", "amount": "100"}
+
+    client.get("/api/route", params=params)
+    decide = client.get("/api/decide", params=params)
+
+    assert decide.status_code == 200
+    assert factory.calls == 1
+    assert decide.json()["quotes"]["from_cache"] is True

@@ -59,8 +59,17 @@ the same routing engine the CLI uses:
   note the CLI prints;
 - provenance badges on every route and hop, provider warnings, and the full
   auditable source registry;
+- a profile-comparison chart when the three profiles pick different routes;
+- shareable URLs (every query updates the address bar and can be bookmarked or
+  sent; the back button restores previous results) and recent-search chips;
+- a short-lived quote session cache so switching preference or top-N reuses
+  the freshly built graph instead of re-querying live providers, with a
+  visible fetched/cached freshness indicator;
 - light/dark themes; the page is fully self-contained with no CDN or external
   requests.
+
+Start it with `uv run remit serve` (add `--open` to launch a browser, or
+`--host`/`--port` to change the binding).
 
 The JSON API behind it is documented at `/api/docs` (`/api/meta`, `/api/route`,
 `/api/decide`, `/api/sources`). The console is a local tool, not a deployment
@@ -84,7 +93,7 @@ target: it adds no authentication, persistence, or payment initiation surface.
 - **Web console:** optional FastAPI backend plus a dependency-free single-page
   frontend sharing the CLI's routing service layer (`remit serve`).
 - **Quality:** Python 3.11-3.13 CI, strict pytest configuration, expanded Ruff
-  rules, package-build validation, and 111 automated tests.
+  rules, package-build validation, and 127 automated tests.
 
 ## Quick start
 

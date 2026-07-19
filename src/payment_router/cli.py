@@ -190,6 +190,10 @@ def sources_command() -> None:
 def serve_command(
     host: Annotated[str, typer.Option("--host", help="Interface to bind.")] = "127.0.0.1",
     port: Annotated[int, typer.Option("--port", min=1, max=65535, help="Port to bind.")] = 8000,
+    open_browser: Annotated[
+        bool,
+        typer.Option("--open/--no-open", help="Open the console in a browser after starting."),
+    ] = False,
 ) -> None:
     """Launch the local web console (requires the 'web' extra)."""
     try:
@@ -204,7 +208,13 @@ def serve_command(
         )
         raise typer.Exit(code=1) from None
 
-    console.print(f"Serving the payment-router console at http://{host}:{port}")
+    url = f"http://{host}:{port}"
+    console.print(f"Serving the payment-router console at {url}")
+    if open_browser:
+        import threading
+        import webbrowser
+
+        threading.Timer(1.0, webbrowser.open, args=[url]).start()
     uvicorn.run(create_app(), host=host, port=port, log_level="info")
 
 

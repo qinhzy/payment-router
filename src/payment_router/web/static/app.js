@@ -245,6 +245,149 @@
     };
   }
 
+  /* ---------- sharable URL state ---------- */
+
+  function requestToParams(kind, request) {
+    const params = new URLSearchParams({
+      from: request.source,
+      to: request.target,
+      amount: request.amount,
+    });
+    if (kind === "decide") {
+      params.set("view", "decide");
+    } else {
+      params.set("profile", request.profile);
+      params.set("top_n", request.top_n);
+    }
+    return params;
+  }
+
+  function requestFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    const source = params.get("from");
+    const target = params.get("to");
+    const amount = params.get("amount");
+    if (!source || !target || !amount) return null;
+    return {
+      kind: params.get("view") === "decide" ? "decide" : "route",
+      source: source.toUpperCase(),
+      target: target.toUpperCase(),
+      amount,
+      profile: params.get("profile") || "balanced",
+      top_n: params.get("top_n") || "1",
+    };
+  }
+
+  function applyRequestToForm(request) {
+    amountInput.value = request.amount;
+    const hasOption = (select, value) =>
+      [...select.options].some((option) => option.value === value);
+    if (hasOption(sourceSelect, request.source)) sourceSelect.value = request.source;
+    if (hasOption(targetSelect, request.target)) targetSelect.value = request.target;
+    const profileInput = form.querySelector(
+      `input[name="profile"][value="${CSS.escape(request.profile)}"]`
+    );
+    if (profileInput) profileInput.checked = true;
+    const topInput = form.querySelector(
+      `input[name="top_n"][value="${CSS.escape(String(request.top_n))}"]`
+    );
+    if (topInput) topInput.checked = true;
+  }
+
+  function syncUrl(kind, request) {
+    const next = `${window.location.pathname}?${requestToParams(kind, request)}`;
+    const current = `${window.location.pathname}${window.location.search}`;
+    if (next !== current) history.pushState(null, "", next);
+  }
+
+  /* ---------- recent searches ---------- */
+
+  const RECENTS_KEY = "payment-router-recents";
+  const MAX_RECENTS = 5;
+  const recentsBox = $("#recents");
+
+  function loadRecents() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(RECENTS_KEY) || "[]");
+      return Array.isArray(parsed) ? parsed.slice(0, MAX_RECENTS) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveRecent(kind, request) {
+    const entry = {
+      kind,
+      source: request.source,
+      target: request.target,
+      amount: request.amount,
+      profile: request.profile,
+      top_n: request.top_n,
+    };
+    const keyOf = (item) => JSON.stringify([
+      item.kind,
+      item.source,
+      item.target,
+      item.amount,
+      item.profile,
+      item.top_n,
+    ]);
+    const next = [
+      entry,
+      ...loadRecents().filter((item) => keyOf(item) !== keyOf(entry)),
+    ].slice(0, MAX_RECENTS);
+    try {
+      localStorage.setItem(RECENTS_KEY, JSON.stringify(next));
+    } catch {
+      /* storage unavailable */
+    }
+    renderRecents();
+  }
+
+  function renderRecents() {
+    const recents = loadRecents();
+    if (recents.length === 0) {
+      recentsBox.hidden = true;
+      recentsBox.replaceChildren();
+      return;
+    }
+    recentsBox.replaceChildren(el("span", "recents-label", "Recent"));
+    recents.forEach((item) => {
+      const chip = el("button", "recent-chip");
+      chip.type = "button";
+      chip.append(
+        document.createTextNode(`${fmtNumber(item.amount)} ${item.source}`),
+        el("span", "sep", "→"),
+        document.createTextNode(item.target),
+        el("span", "sep", "·"),
+        document.createTextNode(item.kind === "decide" ? "compare" : item.profile)
+      );
+      chip.addEventListener("click", () => {
+        applyRequestToForm(item);
+        runRequest(item.kind, item.kind === "decide" ? decideButton : routeButton);
+      });
+      recentsBox.append(chip);
+    });
+    recentsBox.hidden = false;
+  }
+
+  /* ---------- quote freshness ---------- */
+
+  function quotesMetaNode(quotes) {
+    if (!quotes) return null;
+    const wrap = el("div", `quotes-meta${quotes.from_cache ? " cached" : ""}`);
+    wrap.setAttribute("role", "status");
+    wrap.append(el("span", "dot"));
+    const time = new Date(quotes.quoted_at);
+    const stamp = Number.isNaN(time.getTime()) ? quotes.quoted_at : time.toLocaleTimeString();
+    wrap.append(
+      document.createTextNode(
+        quotes.from_cache ? `Quotes cached from ${stamp}` : `Quotes fetched at ${stamp}`
+      )
+    );
+    return wrap;
+  }
+
   /* ---------- route rendering ---------- */
 
   function statTile(label, valueNode, sub) {
@@ -409,6 +552,8 @@
     const nodes = data.routes.map((route, index) =>
       routeCard(route, index + 1, data.routes.length > 1)
     );
+    const meta = quotesMetaNode(data.quotes);
+    if (meta) nodes.unshift(meta);
     resultsBox.replaceChildren(...nodes);
   }
 
@@ -455,11 +600,62 @@
     return card;
   }
 
+  function compareChart(decisions) {
+    const measures = [
+      {
+        title: "Total fee (USD)",
+        value: (decision) => Number.parseFloat(decision.route.total_fee_usd),
+        label: (decision) => `$${fmtNumber(decision.route.total_fee_usd)}`,
+      },
+      {
+        title: "Estimated time",
+        value: (decision) => Number.parseFloat(decision.route.total_time_hours),
+        label: (decision) => humanizeHours(decision.route.total_time_hours),
+      },
+    ];
+    const panel = el("section", "panel");
+    const header = el("div", "panel-header");
+    header.append(el("h2", "", "Profile comparison"));
+    header.append(el("span", "hint", "Same corridor, three optimization targets"));
+    panel.append(header);
+    const grid = el("div", "compare-grid");
+    measures.forEach((measure) => {
+      const chart = el("div", "mini-chart");
+      chart.append(el("div", "mini-chart-title", measure.title));
+      const max = Math.max(...decisions.map(measure.value), 0);
+      decisions.forEach((decision) => {
+        const row = el(
+          "div",
+          `bar-row${decision.profile === "balanced" ? " emphasis" : ""}`
+        );
+        row.append(
+          el("span", "bar-label", PROFILE_LABELS[decision.profile] || decision.profile)
+        );
+        const track = el("div", "bar-track");
+        const bar = el("div", "bar");
+        const share = max > 0 ? Math.max((measure.value(decision) / max) * 100, 2) : 2;
+        bar.style.width = `${share}%`;
+        track.append(bar);
+        row.append(track);
+        row.append(el("span", "bar-value", measure.label(decision)));
+        chart.append(row);
+      });
+      grid.append(chart);
+    });
+    panel.append(grid);
+    return panel;
+  }
+
   function renderDecisions(data) {
     const grid = el("div", "decision-grid");
     data.decisions.forEach((decision) => grid.append(decisionCard(decision)));
 
     const nodes = [grid];
+    const meta = quotesMetaNode(data.quotes);
+    if (meta) nodes.unshift(meta);
+    if (data.tradeoff && !data.tradeoff.same_route_for_all_profiles) {
+      nodes.push(compareChart(data.decisions));
+    }
     if (data.tradeoff) {
       const note = el("div", "tradeoff-note");
       const body = el("div");
@@ -571,6 +767,8 @@
       } else {
         renderRoutes(data);
       }
+      saveRecent(kind, request);
+      syncUrl(kind, request);
     } catch (error) {
       resultsBox.replaceChildren();
       showError(error instanceof Error ? error.message : "Unexpected error.");
@@ -585,6 +783,19 @@
   });
 
   decideButton.addEventListener("click", () => runRequest("decide", decideButton));
+
+  const initialEmptyState = resultsBox.firstElementChild;
+
+  window.addEventListener("popstate", () => {
+    const request = requestFromUrl();
+    if (request) {
+      applyRequestToForm(request);
+      runRequest(request.kind, request.kind === "decide" ? decideButton : routeButton);
+    } else {
+      clearFeedback();
+      resultsBox.replaceChildren(initialEmptyState);
+    }
+  });
 
   swapButton.addEventListener("click", () => {
     const source = sourceSelect.value;
@@ -612,6 +823,7 @@
   }
 
   async function boot() {
+    renderRecents();
     try {
       const meta = await apiGet("/api/meta", {});
       populateCurrencies(meta.currencies);
@@ -622,6 +834,11 @@
       if (meta.disclaimer) {
         $("#disclaimer-text").textContent = meta.disclaimer;
         $("#disclaimer").hidden = false;
+      }
+      const urlRequest = requestFromUrl();
+      if (urlRequest) {
+        applyRequestToForm(urlRequest);
+        runRequest(urlRequest.kind, urlRequest.kind === "decide" ? decideButton : routeButton);
       }
     } catch (error) {
       showError(

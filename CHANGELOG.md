@@ -14,7 +14,14 @@ All notable user-visible changes are recorded here. The project follows
   behind an optional `web` extra, with OpenAPI docs at `/api/docs`;
 - shared `service` layer owning request validation, network instantiation, and
   graph construction for both the CLI and the web API;
-- web API test suite with injectable fake networks (11 cases).
+- short-lived quote session cache (default 60 s, configurable, zero disables)
+  with stampede protection; responses carry `quoted_at`/`from_cache` metadata
+  and the console shows quote freshness;
+- shareable console URLs with browser history support, recent-search chips,
+  and a fee/time profile-comparison chart when profiles disagree;
+- `remit serve --open` flag and `python -m payment_router` entry point;
+- web API test suite with injectable fake networks (15 cases) and a
+  service-layer unit test suite (12 cases).
 
 ### Changed
 
