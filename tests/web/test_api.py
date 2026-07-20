@@ -254,6 +254,7 @@ class _CountingFactory:
 def test_route_reuses_cached_session_within_ttl() -> None:
     factory = _CountingFactory()
     client = TestClient(create_app(networks_factory=factory, quote_ttl_seconds=60.0))
+    baseline = factory.calls  # create_app snapshots the networks once for /api/meta
     params = {"source": "USD", "target": "CNY", "amount": "100"}
 
     first = client.get("/api/route", params=params)
@@ -261,31 +262,45 @@ def test_route_reuses_cached_session_within_ttl() -> None:
 
     assert first.status_code == 200
     assert second.status_code == 200
-    assert factory.calls == 1
+    assert factory.calls == baseline + 1
     assert first.json()["quotes"]["from_cache"] is False
     assert second.json()["quotes"]["from_cache"] is True
     assert second.json()["quotes"]["quoted_at"] == first.json()["quotes"]["quoted_at"]
 
 
+def test_route_reuses_cache_for_equivalent_amount_spellings() -> None:
+    factory = _CountingFactory()
+    client = TestClient(create_app(networks_factory=factory, quote_ttl_seconds=60.0))
+    baseline = factory.calls
+
+    client.get("/api/route", params={"source": "USD", "target": "CNY", "amount": "100"})
+    second = client.get("/api/route", params={"source": "USD", "target": "CNY", "amount": " 100 "})
+
+    assert factory.calls == baseline + 1
+    assert second.json()["quotes"]["from_cache"] is True
+
+
 def test_route_rebuilds_for_different_amount() -> None:
     factory = _CountingFactory()
     client = TestClient(create_app(networks_factory=factory, quote_ttl_seconds=60.0))
+    baseline = factory.calls
 
     client.get("/api/route", params={"source": "USD", "target": "CNY", "amount": "100"})
     client.get("/api/route", params={"source": "USD", "target": "CNY", "amount": "250"})
 
-    assert factory.calls == 2
+    assert factory.calls == baseline + 2
 
 
 def test_zero_ttl_disables_session_cache() -> None:
     factory = _CountingFactory()
     client = TestClient(create_app(networks_factory=factory, quote_ttl_seconds=0))
+    baseline = factory.calls
     params = {"source": "USD", "target": "CNY", "amount": "100"}
 
     first = client.get("/api/route", params=params)
     second = client.get("/api/route", params=params)
 
-    assert factory.calls == 2
+    assert factory.calls == baseline + 2
     assert first.json()["quotes"]["from_cache"] is False
     assert second.json()["quotes"]["from_cache"] is False
 
@@ -293,11 +308,12 @@ def test_zero_ttl_disables_session_cache() -> None:
 def test_decide_shares_cache_with_route() -> None:
     factory = _CountingFactory()
     client = TestClient(create_app(networks_factory=factory, quote_ttl_seconds=60.0))
+    baseline = factory.calls
     params = {"source": "USD", "target": "CNY", "amount": "100"}
 
     client.get("/api/route", params=params)
     decide = client.get("/api/decide", params=params)
 
     assert decide.status_code == 200
-    assert factory.calls == 1
+    assert factory.calls == baseline + 1
     assert decide.json()["quotes"]["from_cache"] is True

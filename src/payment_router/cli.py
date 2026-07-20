@@ -21,7 +21,7 @@ from payment_router.decision import (
 )
 from payment_router.networks.base import PaymentNetwork
 from payment_router.provenance import PROVENANCE_RECORDS
-from payment_router.router import PaymentRouter, RoutingPreference
+from payment_router.router import PaymentRouter
 from payment_router.service import BuildWarning, RoutingRequestError
 from payment_router.visualizer import format_hours, route_to_mermaid, routes_to_comparison_table
 
@@ -84,10 +84,8 @@ def route_command(
         to_currency,
         amount,
     )
-    preference = _preference_from_name(prefer)
-
     if top_n == 1:
-        route = _select_single_route(
+        route = service.select_route_for_profile(
             router,
             source_currency,
             target_currency,
@@ -95,9 +93,7 @@ def route_command(
             prefer,
         )
         if route is None:
-            _print_error(
-                f"No route found from {source_currency} to {target_currency} for {parsed_amount}."
-            )
+            _print_error(service.no_route_message(source_currency, target_currency, parsed_amount))
             raise typer.Exit(code=1)
         _render_route(route)
         return
@@ -106,13 +102,11 @@ def route_command(
         source_currency,
         target_currency,
         parsed_amount,
-        preference,
+        service.preference_for_profile(prefer),
         top_n=top_n,
     )
     if not routes:
-        _print_error(
-            f"No route found from {source_currency} to {target_currency} for {parsed_amount}."
-        )
+        _print_error(service.no_route_message(source_currency, target_currency, parsed_amount))
         raise typer.Exit(code=1)
 
     _render_route_comparison(routes, prefer)
@@ -141,9 +135,7 @@ def decide_command(
         parsed_amount,
     )
     if not decisions:
-        _print_error(
-            f"No route found from {source_currency} to {target_currency} for {parsed_amount}."
-        )
+        _print_error(service.no_route_message(source_currency, target_currency, parsed_amount))
         raise typer.Exit(code=1)
     _render_decision_board(decisions, parsed_amount, show_diagrams=show_diagrams)
 
@@ -243,26 +235,6 @@ def _prepare_router(
     if session.warnings:
         _print_build_warnings(session.warnings)
     return session.source_currency, session.target_currency, session.amount, session.router
-
-
-def _preference_from_name(prefer: DecisionProfile) -> RoutingPreference:
-    return service.preference_for_profile(prefer)
-
-
-def _select_single_route(
-    router: PaymentRouter,
-    source_currency: str,
-    target_currency: str,
-    amount: Decimal,
-    prefer: DecisionProfile,
-):
-    return service.select_route_for_profile(
-        router,
-        source_currency,
-        target_currency,
-        amount,
-        prefer,
-    )
 
 
 def _render_route(route) -> None:

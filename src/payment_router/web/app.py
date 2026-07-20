@@ -100,28 +100,34 @@ class _SessionCache:
             return None
         return entry
 
+    @staticmethod
+    def _build_entry(session: service.RoutingSession) -> _CacheEntry:
+        return _CacheEntry(
+            session=session,
+            built_monotonic=time.monotonic(),
+            quoted_at=datetime.now(UTC),
+        )
+
     async def get(
         self,
         key: _CacheKey,
         builder: Callable[[], Awaitable[service.RoutingSession]],
     ) -> tuple[_CacheEntry, bool]:
+        if self._ttl_seconds <= 0:
+            return self._build_entry(await builder()), False
+
         entry = self._fresh_entry(key)
         if entry is not None:
             return entry, True
 
         lock = self._locks.setdefault(key, Lock())
-        async with lock:
-            entry = self._fresh_entry(key)
-            if entry is not None:
-                return entry, True
+        try:
+            async with lock:
+                entry = self._fresh_entry(key)
+                if entry is not None:
+                    return entry, True
 
-            session = await builder()
-            entry = _CacheEntry(
-                session=session,
-                built_monotonic=time.monotonic(),
-                quoted_at=datetime.now(UTC),
-            )
-            if self._ttl_seconds > 0:
+                entry = self._build_entry(await builder())
                 self._entries[key] = entry
                 while len(self._entries) > self._max_entries:
                     oldest_key = min(
@@ -129,7 +135,14 @@ class _SessionCache:
                         key=lambda cached: self._entries[cached].built_monotonic,
                     )
                     del self._entries[oldest_key]
-            return entry, False
+                    if oldest_key != key:
+                        self._locks.pop(oldest_key, None)
+                return entry, False
+        finally:
+            # Failed builds never cache; drop their lock so keys that can
+            # never succeed do not accumulate entries in the lock table.
+            if key not in self._entries:
+                self._locks.pop(key, None)
 
 
 def create_app(
@@ -152,8 +165,11 @@ def create_app(
         target: str,
         amount: str,
     ) -> tuple[service.RoutingSession, dict[str, object]]:
-        key = (source.strip().upper(), target.strip().upper(), amount.strip())
         try:
+            # Validate up front so equivalent spellings ("100", "100.0") share
+            # one cache key and invalid amounts never reach the cache.
+            canonical_amount = service.parse_amount(amount)
+            key = (source.strip().upper(), target.strip().upper(), str(canonical_amount))
             entry, from_cache = await cache.get(
                 key,
                 lambda: service.build_session(
@@ -175,32 +191,39 @@ def create_app(
     def no_route_error(session: service.RoutingSession) -> HTTPException:
         return HTTPException(
             status_code=404,
-            detail=(
-                f"No route found from {session.source_currency} "
-                f"to {session.target_currency} for {session.amount}."
+            detail=service.no_route_message(
+                session.source_currency,
+                session.target_currency,
+                session.amount,
             ),
         )
 
+    # Neither payload can change over the app's lifetime; build them once.
+    networks_snapshot = networks_factory()
+    meta_payload: dict[str, object] = {
+        "version": application.version,
+        "disclaimer": DISCLAIMER,
+        "currencies": sorted(service.supported_currencies(networks_snapshot)),
+        "networks": [
+            {
+                "name": network.display_name(),
+                "currencies": sorted(network.supported_currencies()),
+            }
+            for network in networks_snapshot
+        ],
+        "profiles": [profile.value for profile in DecisionProfile],
+        "ai": {
+            "enabled": explainer is not None,
+            "model": explainer.model if explainer is not None else None,
+        },
+    }
+    sources_payload: dict[str, object] = {
+        "records": [schemas.provenance_to_json(record) for record in PROVENANCE_RECORDS],
+    }
+
     @application.get("/api/meta")
     async def meta() -> dict[str, object]:
-        networks = networks_factory()
-        return {
-            "version": application.version,
-            "disclaimer": DISCLAIMER,
-            "currencies": sorted(service.supported_currencies(networks)),
-            "networks": [
-                {
-                    "name": service.network_display_name(network),
-                    "currencies": sorted(network.supported_currencies()),
-                }
-                for network in networks
-            ],
-            "profiles": [profile.value for profile in DecisionProfile],
-            "ai": {
-                "enabled": explainer is not None,
-                "model": explainer.model if explainer is not None else None,
-            },
-        }
+        return meta_payload
 
     @application.get("/api/route")
     async def route(
@@ -305,9 +328,7 @@ def create_app(
 
     @application.get("/api/sources")
     async def sources() -> dict[str, object]:
-        return {
-            "records": [schemas.provenance_to_json(record) for record in PROVENANCE_RECORDS],
-        }
+        return sources_payload
 
     application.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="console")
     return application

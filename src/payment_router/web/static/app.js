@@ -162,28 +162,26 @@
     alertsBox.hidden = false;
   }
 
+  function warningList(warnings) {
+    const list = el("ul");
+    warnings.forEach((warning) => {
+      list.append(el("li", "", `${warning.network} ${warning.pair}: ${warning.reason}`));
+    });
+    return list;
+  }
+
   function showWarnings(warnings) {
     if (!warnings || warnings.length === 0) return;
     const alert = el("div", "alert alert-warning");
     const body = el("div");
     body.append(el("strong", "", "Some providers could not quote every corridor"));
-    const list = el("ul");
     const visibleCount = 5;
-    warnings.slice(0, visibleCount).forEach((warning) => {
-      list.append(el("li", "", `${warning.network} ${warning.pair}: ${warning.reason}`));
-    });
-    body.append(list);
+    body.append(warningList(warnings.slice(0, visibleCount)));
     if (warnings.length > visibleCount) {
       const rest = warnings.slice(visibleCount);
       const details = el("details");
-      details.append(
-        el("summary", "", `Show ${rest.length} more`)
-      );
-      const restList = el("ul");
-      rest.forEach((warning) => {
-        restList.append(el("li", "", `${warning.network} ${warning.pair}: ${warning.reason}`));
-      });
-      details.append(restList);
+      details.append(el("summary", "", `Show ${rest.length} more`));
+      details.append(warningList(rest));
       body.append(details);
     }
     alert.append(svg(ICONS.warning), body);
@@ -220,23 +218,23 @@
 
   /* ---------- fetch ---------- */
 
-  async function apiGet(path, params) {
-    const query = new URLSearchParams(params);
-    const response = await fetch(`${path}?${query}`, { headers: { Accept: "application/json" } });
-    let payload = null;
+  async function errorDetail(response) {
     try {
-      payload = await response.json();
+      const payload = await response.json();
+      if (payload && typeof payload.detail === "string") return payload.detail;
     } catch {
       /* non-JSON error body */
     }
+    return `Request failed with status ${response.status}.`;
+  }
+
+  async function apiGet(path, params) {
+    const query = new URLSearchParams(params);
+    const response = await fetch(`${path}?${query}`, { headers: { Accept: "application/json" } });
     if (!response.ok) {
-      const detail =
-        payload && typeof payload.detail === "string"
-          ? payload.detail
-          : `Request failed with status ${response.status}.`;
-      throw new Error(detail);
+      throw new Error(await errorDetail(response));
     }
-    return payload;
+    return response.json();
   }
 
   function currentRequest() {
@@ -671,31 +669,19 @@
       } else {
         const target =
           data.decisions.length > 0 ? data.decisions[0].route.target_currency : "";
+        const deltaSpan = (value, unit, lowerIsBetter) => {
+          const good = lowerIsBetter
+            ? Number.parseFloat(value) <= 0
+            : Number.parseFloat(value) >= 0;
+          return el("span", good ? "delta-positive" : "delta-negative", `${fmtSigned(value)} ${unit}`);
+        };
         body.append(
           document.createTextNode("Balanced vs cheapest: fee "),
-          el(
-            "span",
-            Number.parseFloat(data.tradeoff.balanced_fee_delta_usd) <= 0
-              ? "delta-positive"
-              : "delta-negative",
-            `${fmtSigned(data.tradeoff.balanced_fee_delta_usd)} USD`
-          ),
+          deltaSpan(data.tradeoff.balanced_fee_delta_usd, "USD", true),
           document.createTextNode(", time saved "),
-          el(
-            "span",
-            Number.parseFloat(data.tradeoff.balanced_hours_saved_vs_cheapest) >= 0
-              ? "delta-positive"
-              : "delta-negative",
-            `${fmtSigned(data.tradeoff.balanced_hours_saved_vs_cheapest)} h`
-          ),
+          deltaSpan(data.tradeoff.balanced_hours_saved_vs_cheapest, "h", false),
           document.createTextNode(", recipient amount "),
-          el(
-            "span",
-            Number.parseFloat(data.tradeoff.balanced_receive_delta) >= 0
-              ? "delta-positive"
-              : "delta-negative",
-            `${fmtSigned(data.tradeoff.balanced_receive_delta)} ${target}`
-          ),
+          deltaSpan(data.tradeoff.balanced_receive_delta, target, false),
           document.createTextNode(".")
         );
       }
@@ -775,20 +761,26 @@
       body: JSON.stringify({ kind, data, lang: navigator.language || "en" }),
     });
     if (!response.ok || !response.body) {
-      let detail = `Request failed with status ${response.status}.`;
-      try {
-        const payload = await response.json();
-        if (typeof payload.detail === "string") detail = payload.detail;
-      } catch {
-        /* non-JSON error body */
-      }
-      throw new Error(detail);
+      throw new Error(await errorDetail(response));
     }
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     let fullText = "";
+
+    // Coalesce renders to one per animation frame — rebuilding the output
+    // on every SSE delta is quadratic over the stream.
+    let renderQueued = false;
+    const queueRender = () => {
+      if (renderQueued) return;
+      renderQueued = true;
+      requestAnimationFrame(() => {
+        renderQueued = false;
+        renderAiText(output, fullText, true);
+      });
+    };
+
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
@@ -800,7 +792,7 @@
         const event = JSON.parse(part.slice(6));
         if (event.type === "delta") {
           fullText += event.text;
-          renderAiText(output, fullText, true);
+          queueRender();
         } else if (event.type === "done") {
           renderAiText(output, fullText, false);
           return { model: event.model };
@@ -829,6 +821,9 @@
     const body = el("div", "ai-body");
     body.hidden = true;
     const output = el("div", "ai-output");
+    // The results container is aria-live; opting the streamed output out
+    // stops screen readers re-announcing the whole text on every delta.
+    output.setAttribute("aria-live", "off");
     const footer = el("div", "ai-footer");
     footer.hidden = true;
     body.append(output, footer);
@@ -984,8 +979,10 @@
 
   async function boot() {
     renderRecents();
+    const metaPromise = apiGet("/api/meta", {});
+    const sourcesPromise = apiGet("/api/sources", {});
     try {
-      const meta = await apiGet("/api/meta", {});
+      const meta = await metaPromise;
       aiMeta = meta.ai || null;
       populateCurrencies(meta.currencies);
       meta.networks.forEach((network) => networkSlot(network.name));
@@ -1009,7 +1006,7 @@
       );
     }
     try {
-      const sources = await apiGet("/api/sources", {});
+      const sources = await sourcesPromise;
       renderSources(sources.records);
     } catch {
       sourcesBox.replaceChildren(

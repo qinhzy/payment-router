@@ -73,6 +73,11 @@ def parse_amount(raw_amount: str) -> Decimal:
     return amount
 
 
+def no_route_message(source_currency: str, target_currency: str, amount: Decimal) -> str:
+    """The user-facing sentence shared by every frontend when routing fails."""
+    return f"No route found from {source_currency} to {target_currency} for {amount}."
+
+
 def preference_for_profile(profile: DecisionProfile) -> RoutingPreference:
     if profile is DecisionProfile.CHEAPEST:
         return RoutingPreference(cost_weight=1.0, time_weight=0.0)

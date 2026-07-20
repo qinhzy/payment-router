@@ -2,6 +2,11 @@
 
 Decimal values are serialized as strings with the same formatting the CLI
 uses, so both frontends always display identical numbers.
+
+Wire contract: monetary and hour strings are plain decimals with a dot
+separator and no grouping (e.g. "7100.55"), so clients may parse them as
+floats for display math. Keep it that way — introducing thousands
+separators or currency symbols here would silently break the console.
 """
 
 from __future__ import annotations
@@ -14,6 +19,7 @@ from payment_router.visualizer import (
     format_amount,
     format_hours,
     route_node_amounts,
+    route_node_currencies,
     route_to_mermaid,
 )
 
@@ -34,10 +40,9 @@ def hop_to_json(hop: Hop) -> dict[str, object]:
 
 
 def route_to_json(route: Route) -> dict[str, object]:
-    path = [route.source_currency, *(hop.to_node for hop in route.hops)]
     provenance = {source for hop in route.hops for source in hop.provenance_sources}
     return {
-        "path": path,
+        "path": route_node_currencies(route),
         "amounts": [format_amount(amount) for amount in route_node_amounts(route)],
         "hops": [hop_to_json(hop) for hop in route.hops],
         "total_fee_usd": format_amount(route.total_fee_usd),

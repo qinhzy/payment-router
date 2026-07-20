@@ -7,7 +7,7 @@ from payment_router.core.models import Route
 
 
 def route_to_mermaid(route: Route) -> str:
-    node_currencies = _node_currencies(route)
+    node_currencies = route_node_currencies(route)
     node_ids = _node_ids(node_currencies)
     node_amounts = route_node_amounts(route)
 
@@ -45,7 +45,7 @@ def routes_to_comparison_table(routes: list[Route]) -> str:
         "| --- | ---: | ---: | ---: | --- |",
     ]
     for index, route in enumerate(routes, start=1):
-        path = " → ".join(_node_currencies(route))
+        path = " → ".join(route_node_currencies(route))
         lines.append(
             "| "
             f"Route {index} | "
@@ -58,7 +58,8 @@ def routes_to_comparison_table(routes: list[Route]) -> str:
     return "\n".join(lines)
 
 
-def _node_currencies(route: Route) -> list[str]:
+def route_node_currencies(route: Route) -> list[str]:
+    """Currency at each node of the route, aligned with ``route_node_amounts``."""
     if not route.hops:
         return [route.source_currency]
     return [route.source_currency, *[hop.to_node for hop in route.hops]]
