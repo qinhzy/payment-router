@@ -50,6 +50,9 @@ def test_meta_reports_currencies_networks_and_profiles() -> None:
     assert payload["profiles"] == ["cheapest", "fastest", "balanced"]
     assert payload["version"]
     assert "simulator" in payload["disclaimer"]
+    assert payload["fx"]["mode"] == "frozen"
+    assert payload["fx"]["classification"] == "ESTIMATED"
+    assert payload["fx"]["fallback"] is False
 
 
 def test_route_returns_single_route_with_amounts_and_mermaid() -> None:

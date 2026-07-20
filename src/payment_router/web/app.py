@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from payment_router import service
+from payment_router.core import fx
 from payment_router.decision import DecisionProfile, build_decision_board, summarize_tradeoff
 from payment_router.networks.base import PaymentNetwork
 from payment_router.provenance import PROVENANCE_RECORDS
@@ -200,6 +201,7 @@ def create_app(
 
     # Neither payload can change over the app's lifetime; build them once.
     networks_snapshot = networks_factory()
+    fx_status = fx.current_status()
     meta_payload: dict[str, object] = {
         "version": application.version,
         "disclaimer": DISCLAIMER,
@@ -212,6 +214,16 @@ def create_app(
             for network in networks_snapshot
         ],
         "profiles": [profile.value for profile in DecisionProfile],
+        "fx": {
+            "mode": fx_status.mode,
+            "requested_mode": fx_status.requested_mode,
+            "label": fx_status.label,
+            "classification": fx_status.classification.value,
+            "rate_date": fx_status.rate_date,
+            "stale": fx_status.stale,
+            "fallback": fx_status.fallback,
+            "detail": fx_status.detail,
+        },
         "ai": {
             "enabled": explainer is not None,
             "model": explainer.model if explainer is not None else None,

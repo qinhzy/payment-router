@@ -39,8 +39,11 @@ score(e) = alpha * cost(e) / max_cost + beta * time(e) / max_time
 
 `alpha` and `beta` are normalized from the requested preference. `cost(e)` is
 the USD-normalized fee plus the non-negative loss implied by the edge rate
-relative to the frozen mid-rate table. The scoring inputs retain their own data
-classifications; normalization does not turn an estimate into verified data.
+relative to the active FX source's mid-rate table — the frozen teaching table
+by default, or a cached ECB reference-rate snapshot under `--fx live`. The
+scoring inputs retain their own data classifications; normalization does not
+turn an estimate into verified data, and fee labels inherit the FX source's
+class when a conversion participates.
 
 ## Route algorithms
 

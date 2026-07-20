@@ -115,7 +115,7 @@ def test_version_option_prints_project_version() -> None:
     result = runner.invoke(app, ["--version"])
 
     assert result.exit_code == 0
-    assert "0.3.0" in result.output
+    assert "0.4.0" in result.output
 
 
 def test_sources_command_lists_verified_and_estimated_evidence() -> None:

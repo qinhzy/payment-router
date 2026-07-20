@@ -10,6 +10,8 @@
 - 四个货币：当前默认 `USD`、`EUR`、`GBP`、`CNY`
 - 支持输出 Mermaid 路由可视化
 - 本地 Web 控制台（`remit serve`）：FastAPI API + 静态单页前端
+- 可插拔 FX 汇率源：默认冻结教学表；`--fx live` 使用 ECB 参考汇率快照，
+  离线时显式回退并降级标注
 - 可选 AI 解读：仅在 Anthropic 凭证可解析时启用；解读必须严格基于控制台
   展示的 JSON，保留教学模拟器免责声明，不得编造数字
 - 不做用户系统
@@ -31,6 +33,7 @@
 
 - `src/payment_router/networks/`：各支付网络实现与抽象基类
 - `src/payment_router/core/models.py`：`Hop`、`Route`、`NetworkQuote` 等核心模型
+- `src/payment_router/core/fx.py`：可插拔 FX 汇率源（冻结教学表 + ECB 实时快照）
 - `src/payment_router/core/graph.py`：从 networks 构造 `networkx` 图
 - `src/payment_router/router.py`：路由算法
 - `src/payment_router/service.py`：CLI 与 Web 共享的请求校验与路由会话服务层

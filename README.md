@@ -99,6 +99,9 @@ target: it adds no authentication, persistence, or payment initiation surface.
   maximum and an explicitly estimated sender fee.
 - **SWIFT scenario:** configurable correspondent-hop simulation. The topology
   is source-backed; all numeric hop parameters are labelled `ESTIMATED`.
+- **FX sources:** a frozen teaching table by default; `--fx live` switches to
+  ECB euro reference rates via Frankfurter with an on-disk snapshot cache and
+  explicit stale/fallback behavior.
 - **Routing:** normalized cost/time Dijkstra selection plus edge-expanded top-N
   enumeration that preserves parallel payment networks.
 - **Resilience:** bounded concurrent quote collection, deterministic warnings,
@@ -108,7 +111,7 @@ target: it adds no authentication, persistence, or payment initiation surface.
 - **Web console:** optional FastAPI backend plus a dependency-free single-page
   frontend sharing the CLI's routing service layer (`remit serve`).
 - **Quality:** Python 3.11-3.13 CI, strict pytest configuration, expanded Ruff
-  rules, package-build validation, and 133 automated tests.
+  rules, package-build validation, and 143 automated tests.
 
 ## Quick start
 
@@ -158,7 +161,7 @@ src/payment_router/
 |-- networks/          # Wise, SEPA, and SWIFT adapters/models
 |-- core/
 |   |-- models.py      # quote, hop, route, and metric provenance models
-|   |-- fx.py          # frozen FX normalization table
+|   |-- fx.py          # pluggable FX sources (frozen table / live ECB)
 |   `-- graph.py       # concurrent MultiDiGraph construction
 |-- router.py          # single-route and edge-distinct top-N routing
 |-- decision.py        # cheapest/fastest/balanced comparison
@@ -178,7 +181,9 @@ The detailed algorithm, invariants, and boundaries are documented in
 ## Known limitations
 
 - Only `USD`, `EUR`, `GBP`, and `CNY` are supported.
-- Frozen FX mid-rates make runs reproducible but not market-current.
+- The default frozen FX mid-rates make runs reproducible but not
+  market-current; `--fx live` uses ECB reference rates, which are daily
+  indicative fixings rather than tradable quotes.
 - The graph quotes each corridor at the source-equivalent amount; later-hop
   live quotes can differ because the actual arriving amount is path-dependent.
 - Wise delivery estimates for an already funded balance can understate the time
@@ -189,10 +194,9 @@ The detailed algorithm, invariants, and boundaries are documented in
 
 ## Roadmap
 
-- **v0.3:** local web console over a shared routing service layer (this
-  release).
+- **v0.3:** local web console over a shared routing service layer (shipped).
 - **v0.4:** pluggable ECB/Frankfurter FX provider with cached, reproducible
-  snapshots and explicit fallback behavior.
+  snapshots and explicit fallback behavior (this release).
 - **v0.5:** independent multi-hop timing model and sensitivity analysis.
 - **v0.6:** source-backed corridor expansion and an RMB-focused CIPS scenario.
 - **v0.7:** historical comparison without turning the simulator into an online

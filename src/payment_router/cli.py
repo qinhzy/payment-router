@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from decimal import Decimal
+from enum import StrEnum
 from importlib.metadata import version as distribution_version
 from typing import Annotated
 
@@ -13,6 +15,7 @@ from rich.table import Table
 from rich.text import Text
 
 from payment_router import service
+from payment_router.core import fx
 from payment_router.decision import (
     DecisionProfile,
     RouteDecision,
@@ -33,6 +36,38 @@ app = typer.Typer(
 )
 console = Console()
 error_console = Console(stderr=True)
+
+
+class FxMode(StrEnum):
+    FROZEN = "frozen"
+    LIVE = "live"
+
+
+_FX_OPTION = typer.Option(
+    "--fx",
+    help="FX rate source: 'frozen' teaching table (default) or 'live' ECB reference rates.",
+    case_sensitive=False,
+)
+
+
+def _activate_fx(fx_mode: FxMode | None) -> None:
+    requested = (
+        fx_mode.value
+        if fx_mode is not None
+        else os.environ.get(fx.FX_MODE_ENV_VAR, "frozen").strip().lower()
+    )
+    if requested not in {"frozen", "live"}:
+        _print_error(f"Unknown FX mode: {requested}. Use 'frozen' or 'live'.")
+        raise typer.Exit(code=1)
+
+    status = fx.activate(requested)
+    if status.fallback:
+        console.print(Panel(status.detail, title="FX fallback", border_style="yellow"))
+    elif status.mode == "live":
+        line = f"FX: {status.label} · {status.rate_date} ({status.classification.value})"
+        if status.stale:
+            line += " · cached snapshot (refresh failed)"
+        console.print(line, style="dim")
 
 
 def _read_version() -> str:
@@ -78,7 +113,9 @@ def route_command(
         int,
         typer.Option("--top-n", min=1, help="Number of candidate routes to display."),
     ] = 1,
+    fx_mode: Annotated[FxMode | None, _FX_OPTION] = None,
 ) -> None:
+    _activate_fx(fx_mode)
     source_currency, target_currency, parsed_amount, router = _prepare_router(
         from_currency,
         to_currency,
@@ -121,8 +158,10 @@ def decide_command(
         bool,
         typer.Option("--show-diagrams", help="Render Mermaid diagrams for unique recommendations."),
     ] = False,
+    fx_mode: Annotated[FxMode | None, _FX_OPTION] = None,
 ) -> None:
     """Compare cheapest, fastest, and balanced recommendations in one decision board."""
+    _activate_fx(fx_mode)
     source_currency, target_currency, parsed_amount, router = _prepare_router(
         from_currency,
         to_currency,
@@ -186,8 +225,10 @@ def serve_command(
         bool,
         typer.Option("--open/--no-open", help="Open the console in a browser after starting."),
     ] = False,
+    fx_mode: Annotated[FxMode | None, _FX_OPTION] = None,
 ) -> None:
     """Launch the local web console (requires the 'web' extra)."""
+    _activate_fx(fx_mode)
     try:
         import uvicorn
 

@@ -202,6 +202,12 @@ a:hover {
   white-space: nowrap;
 }
 
+.chip-warning {
+  color: var(--warning-text);
+  background: var(--warning-wash);
+  border-color: transparent;
+}
+
 .icon-button {
   display: grid;
   place-items: center;

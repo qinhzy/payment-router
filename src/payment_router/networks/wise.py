@@ -104,15 +104,17 @@ class WiseNetwork(PaymentNetwork):
         except (InvalidOperation, KeyError, TypeError, ValueError) as exc:
             raise WiseAPIError("Wise quote response missing required fields") from exc
 
+        # The provider fields are live; normalizing the non-USD fee into the
+        # simulator's common USD score inherits the active FX source's class
+        # (VERIFIED with live ECB rates, ESTIMATED with the frozen table).
+        fee_classification = fx.classification()
         return NetworkQuote(
             network_name="wise",
             fee_usd=fx.to_usd(fee_total_source, source_currency),
             time_hours=time_hours,
             fx_rate=fx_rate,
-            # The provider fields are live, but converting a non-USD fee into
-            # the simulator's common USD score uses the frozen FX table.
-            data_source=DataSource.ESTIMATED,
-            fee_data_source=DataSource.ESTIMATED,
+            data_source=fee_classification,
+            fee_data_source=fee_classification,
             time_data_source=DataSource.VERIFIED,
             fx_data_source=DataSource.VERIFIED,
         )

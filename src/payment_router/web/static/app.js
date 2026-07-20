@@ -989,6 +989,16 @@
       const versionChip = $("#version-chip");
       versionChip.textContent = `v${meta.version}`;
       versionChip.hidden = false;
+      if (meta.fx) {
+        const fxChip = $("#fx-chip");
+        fxChip.textContent =
+          meta.fx.mode === "live"
+            ? `FX · ECB ${meta.fx.rate_date}${meta.fx.stale ? " (cached)" : ""}`
+            : `FX · frozen table${meta.fx.fallback ? " (live unavailable)" : ""}`;
+        fxChip.title = meta.fx.detail || "";
+        if (meta.fx.fallback) fxChip.classList.add("chip-warning");
+        fxChip.hidden = false;
+      }
       if (meta.disclaimer) {
         $("#disclaimer-text").textContent = meta.disclaimer;
         $("#disclaimer").hidden = false;

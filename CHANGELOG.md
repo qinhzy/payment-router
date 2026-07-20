@@ -3,6 +3,26 @@
 All notable user-visible changes are recorded here. The project follows
 [Semantic Versioning](https://semver.org/) while it approaches a stable API.
 
+## [0.4.0] - Unreleased
+
+### Added
+
+- pluggable FX rate sources: the frozen teaching table stays the default,
+  and `--fx live` (or `PAYMENT_ROUTER_FX=live`) activates ECB euro reference
+  rates via the Frankfurter API, classified `VERIFIED`;
+- on-disk FX snapshot cache: same-day reruns reuse the snapshot without a
+  network call, refresh failures fall back to the stale snapshot, and a
+  missing snapshot falls back to the frozen table with an explicit warning;
+- FX disclosure everywhere: a CLI status line, an `fx` block in `/api/meta`,
+  and a console topbar chip showing source, rate date, and fallback state;
+- `fx-live-ecb` provenance record and registry documentation.
+
+### Changed
+
+- Wise's normalized `fee_usd` classification now follows the active FX
+  source: `VERIFIED` under live ECB rates, `ESTIMATED` under the frozen
+  table (the quote summary upgrades with it).
+
 ## [0.3.0] - Unreleased
 
 ### Added
