@@ -1,55 +1,11 @@
 from __future__ import annotations
 
-from decimal import Decimal
-
 from fastapi.testclient import TestClient
+from helpers import FakeNetwork, make_quote
 
-from payment_router.core.models import DataSource, NetworkQuote
+from payment_router.core.models import DataSource
 from payment_router.networks.base import PaymentNetwork
 from payment_router.web.app import create_app
-
-
-def _quote(
-    network_name: str,
-    fee_usd: str,
-    time_hours: str,
-    fx_rate: str,
-    data_source: DataSource = DataSource.INDUSTRY_AVERAGE,
-) -> NetworkQuote:
-    return NetworkQuote(
-        network_name=network_name,
-        fee_usd=Decimal(fee_usd),
-        time_hours=Decimal(time_hours),
-        fx_rate=Decimal(fx_rate),
-        data_source=data_source,
-    )
-
-
-class FakeNetwork(PaymentNetwork):
-    def __init__(
-        self,
-        name: str,
-        supported: set[str],
-        quotes: dict[tuple[str, str], NetworkQuote | None | Exception],
-    ) -> None:
-        self._name = name
-        self._supported = supported
-        self._quotes = quotes
-
-    async def get_quote(
-        self,
-        amount: Decimal,
-        from_currency: str,
-        to_currency: str,
-    ) -> NetworkQuote | None:
-        _ = amount
-        result = self._quotes.get((from_currency, to_currency))
-        if isinstance(result, Exception):
-            raise result
-        return result
-
-    def supported_currencies(self) -> set[str]:
-        return self._supported
 
 
 def _stub_networks() -> list[PaymentNetwork]:
@@ -58,23 +14,23 @@ def _stub_networks() -> list[PaymentNetwork]:
             "Wise",
             {"USD", "EUR", "CNY"},
             {
-                ("USD", "CNY"): _quote("Wise", "5", "1", "7.0", DataSource.VERIFIED),
-                ("USD", "EUR"): _quote("Wise", "2", "1", "0.9", DataSource.VERIFIED),
-                ("EUR", "CNY"): _quote("Wise", "2", "1", "7.6", DataSource.VERIFIED),
+                ("USD", "CNY"): make_quote("Wise", "5", "1", "7.0", DataSource.VERIFIED),
+                ("USD", "EUR"): make_quote("Wise", "2", "1", "0.9", DataSource.VERIFIED),
+                ("EUR", "CNY"): make_quote("Wise", "2", "1", "7.6", DataSource.VERIFIED),
             },
         ),
         FakeNetwork(
             "SEPA",
             {"EUR"},
             {
-                ("EUR", "EUR"): _quote("SEPA", "0.27", "24", "1.0"),
+                ("EUR", "EUR"): make_quote("SEPA", "0.27", "24", "1.0"),
             },
         ),
         FakeNetwork(
             "SWIFT",
             {"USD", "CNY"},
             {
-                ("USD", "CNY"): _quote("SWIFT", "20", "30", "6.8"),
+                ("USD", "CNY"): make_quote("SWIFT", "20", "30", "6.8"),
             },
         ),
     ]
@@ -168,7 +124,7 @@ def test_route_returns_404_when_no_path_exists() -> None:
             FakeNetwork(
                 "OneWay",
                 {"USD", "CNY"},
-                {("CNY", "USD"): _quote("OneWay", "1", "1", "0.14")},
+                {("CNY", "USD"): make_quote("OneWay", "1", "1", "0.14")},
             )
         ]
 

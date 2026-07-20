@@ -3,55 +3,13 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
+from helpers import FakeNetwork, make_quote
 
 from payment_router.core.fx import get_mid_rate
 from payment_router.core.graph import PaymentGraph
-from payment_router.core.models import DataSource, NetworkQuote
+from payment_router.core.models import DataSource
 from payment_router.networks.base import PaymentNetwork
 from payment_router.router import PaymentRouter, RoutingPreference
-
-
-def _quote(
-    network_name: str,
-    fee_usd: str,
-    time_hours: str,
-    fx_rate: str,
-    data_source: DataSource = DataSource.INDUSTRY_AVERAGE,
-) -> NetworkQuote:
-    return NetworkQuote(
-        network_name=network_name,
-        fee_usd=Decimal(fee_usd),
-        time_hours=Decimal(time_hours),
-        fx_rate=Decimal(fx_rate),
-        data_source=data_source,
-    )
-
-
-class FakeNetwork(PaymentNetwork):
-    def __init__(
-        self,
-        name: str,
-        supported: set[str],
-        quotes: dict[tuple[str, str], NetworkQuote | None | Exception],
-    ) -> None:
-        self._name = name
-        self._supported = supported
-        self._quotes = quotes
-
-    async def get_quote(
-        self,
-        amount: Decimal,
-        from_cur: str,
-        to_cur: str,
-    ) -> NetworkQuote | None:
-        _ = amount
-        result = self._quotes.get((from_cur, to_cur))
-        if isinstance(result, Exception):
-            raise result
-        return result
-
-    def supported_currencies(self) -> set[str]:
-        return self._supported
 
 
 async def _build_router(
@@ -73,13 +31,13 @@ async def test_cheapest_prefers_wise_direct_route() -> None:
             FakeNetwork(
                 "wise",
                 {"GBP", "CNY"},
-                {("GBP", "CNY"): _quote("Wise", "5", "1", "9.0", DataSource.VERIFIED)},
+                {("GBP", "CNY"): make_quote("Wise", "5", "1", "9.0", DataSource.VERIFIED)},
             ),
             FakeNetwork(
                 "swift",
                 {"GBP", "CNY"},
                 {
-                    ("GBP", "CNY"): _quote(
+                    ("GBP", "CNY"): make_quote(
                         "SWIFT",
                         "60",
                         "54",
@@ -105,12 +63,12 @@ async def test_fastest_prefers_wise_direct_route() -> None:
             FakeNetwork(
                 "wise",
                 {"GBP", "CNY"},
-                {("GBP", "CNY"): _quote("Wise", "5", "1", "9.0", DataSource.VERIFIED)},
+                {("GBP", "CNY"): make_quote("Wise", "5", "1", "9.0", DataSource.VERIFIED)},
             ),
             FakeNetwork(
                 "swift",
                 {"GBP", "CNY"},
-                {("GBP", "CNY"): _quote("SWIFT", "60", "54", "8.7")},
+                {("GBP", "CNY"): make_quote("SWIFT", "60", "54", "8.7")},
             ),
         ],
         currencies=["GBP", "CNY"],
@@ -129,12 +87,12 @@ async def test_balanced_preference_still_picks_consistent_best_route() -> None:
             FakeNetwork(
                 "wise",
                 {"GBP", "CNY"},
-                {("GBP", "CNY"): _quote("Wise", "5", "1", "9.0", DataSource.VERIFIED)},
+                {("GBP", "CNY"): make_quote("Wise", "5", "1", "9.0", DataSource.VERIFIED)},
             ),
             FakeNetwork(
                 "swift",
                 {"GBP", "CNY"},
-                {("GBP", "CNY"): _quote("SWIFT", "60", "54", "8.7")},
+                {("GBP", "CNY"): make_quote("SWIFT", "60", "54", "8.7")},
             ),
         ],
         currencies=["GBP", "CNY"],
@@ -180,12 +138,12 @@ async def test_same_currency_routes_compare_parallel_payment_rails() -> None:
             FakeNetwork(
                 "standard",
                 {"EUR"},
-                {("EUR", "EUR"): _quote("SEPA", "0.27", "24", "1.0")},
+                {("EUR", "EUR"): make_quote("SEPA", "0.27", "24", "1.0")},
             ),
             FakeNetwork(
                 "instant",
                 {"EUR"},
-                {("EUR", "EUR"): _quote("SEPA Instant", "0.54", "0.003", "1.0")},
+                {("EUR", "EUR"): make_quote("SEPA Instant", "0.54", "0.003", "1.0")},
             ),
         ],
         currencies=["EUR"],
@@ -215,7 +173,7 @@ async def test_disconnected_target_returns_none() -> None:
             FakeNetwork(
                 "bridge",
                 {"USD", "EUR"},
-                {("USD", "EUR"): _quote("Bridge", "2", "2", "0.9")},
+                {("USD", "EUR"): make_quote("Bridge", "2", "2", "0.9")},
             )
         ],
         currencies=["USD", "EUR", "CNY"],
@@ -238,7 +196,7 @@ async def test_find_all_routes_returns_empty_for_disconnected_target() -> None:
             FakeNetwork(
                 "bridge",
                 {"USD", "EUR"},
-                {("USD", "EUR"): _quote("Bridge", "2", "2", "0.9")},
+                {("USD", "EUR"): make_quote("Bridge", "2", "2", "0.9")},
             )
         ],
         currencies=["USD", "EUR", "CNY"],
@@ -261,12 +219,12 @@ async def test_max_hops_limit_blocks_longer_route() -> None:
             FakeNetwork(
                 "wise-hop-1",
                 {"USD", "EUR"},
-                {("USD", "EUR"): _quote("Wise EUR", "3", "1", "0.8", DataSource.VERIFIED)},
+                {("USD", "EUR"): make_quote("Wise EUR", "3", "1", "0.8", DataSource.VERIFIED)},
             ),
             FakeNetwork(
                 "wise-hop-2",
                 {"EUR", "CNY"},
-                {("EUR", "CNY"): _quote("Wise CNY", "4", "1", "9.0", DataSource.VERIFIED)},
+                {("EUR", "CNY"): make_quote("Wise CNY", "4", "1", "9.0", DataSource.VERIFIED)},
             ),
         ],
         currencies=["USD", "EUR", "CNY"],
@@ -289,12 +247,12 @@ async def test_parallel_edges_choose_cheapest_option() -> None:
             FakeNetwork(
                 "wise",
                 {"USD", "CNY"},
-                {("USD", "CNY"): _quote("Wise", "5", "1", "7.0", DataSource.VERIFIED)},
+                {("USD", "CNY"): make_quote("Wise", "5", "1", "7.0", DataSource.VERIFIED)},
             ),
             FakeNetwork(
                 "alt",
                 {"USD", "CNY"},
-                {("USD", "CNY"): _quote("Alt", "20", "1", "7.0")},
+                {("USD", "CNY"): make_quote("Alt", "20", "1", "7.0")},
             ),
         ],
         currencies=["USD", "CNY"],
@@ -313,12 +271,12 @@ async def test_find_all_routes_preserves_parallel_network_options() -> None:
             FakeNetwork(
                 "wise",
                 {"USD", "CNY"},
-                {("USD", "CNY"): _quote("Wise", "5", "1", "7.0")},
+                {("USD", "CNY"): make_quote("Wise", "5", "1", "7.0")},
             ),
             FakeNetwork(
                 "swift",
                 {"USD", "CNY"},
-                {("USD", "CNY"): _quote("SWIFT", "20", "30", "6.8")},
+                {("USD", "CNY"): make_quote("SWIFT", "20", "30", "6.8")},
             ),
         ],
         currencies=["USD", "CNY"],
@@ -342,12 +300,12 @@ async def test_two_hop_route_is_found_when_no_direct_path_exists() -> None:
             FakeNetwork(
                 "hop-1",
                 {"USD", "EUR"},
-                {("USD", "EUR"): _quote("Hop 1", "3", "2", "0.8")},
+                {("USD", "EUR"): make_quote("Hop 1", "3", "2", "0.8")},
             ),
             FakeNetwork(
                 "hop-2",
                 {"EUR", "CNY"},
-                {("EUR", "CNY"): _quote("Hop 2", "4", "3", "9.0")},
+                {("EUR", "CNY"): make_quote("Hop 2", "4", "3", "9.0")},
             ),
         ],
         currencies=["USD", "EUR", "CNY"],
@@ -368,27 +326,27 @@ async def test_find_all_routes_returns_top_n_sorted_by_all_in_cost() -> None:
             FakeNetwork(
                 "direct",
                 {"USD", "CNY"},
-                {("USD", "CNY"): _quote("Direct", "10", "1", "7.0")},
+                {("USD", "CNY"): make_quote("Direct", "10", "1", "7.0")},
             ),
             FakeNetwork(
                 "eur-hop-1",
                 {"USD", "EUR"},
-                {("USD", "EUR"): _quote("USD->EUR", "3", "2", "0.8")},
+                {("USD", "EUR"): make_quote("USD->EUR", "3", "2", "0.8")},
             ),
             FakeNetwork(
                 "eur-hop-2",
                 {"EUR", "CNY"},
-                {("EUR", "CNY"): _quote("EUR->CNY", "3", "2", "9.0")},
+                {("EUR", "CNY"): make_quote("EUR->CNY", "3", "2", "9.0")},
             ),
             FakeNetwork(
                 "gbp-hop-1",
                 {"USD", "GBP"},
-                {("USD", "GBP"): _quote("USD->GBP", "4", "2", "0.7")},
+                {("USD", "GBP"): make_quote("USD->GBP", "4", "2", "0.7")},
             ),
             FakeNetwork(
                 "gbp-hop-2",
                 {"GBP", "CNY"},
-                {("GBP", "CNY"): _quote("GBP->CNY", "4", "2", "10.0")},
+                {("GBP", "CNY"): make_quote("GBP->CNY", "4", "2", "10.0")},
             ),
         ],
         currencies=["USD", "EUR", "GBP", "CNY"],
@@ -427,7 +385,7 @@ async def test_amount_zero_returns_none() -> None:
             FakeNetwork(
                 "wise",
                 {"USD", "CNY"},
-                {("USD", "CNY"): _quote("Wise", "5", "1", "7.0", DataSource.VERIFIED)},
+                {("USD", "CNY"): make_quote("Wise", "5", "1", "7.0", DataSource.VERIFIED)},
             )
         ],
         currencies=["USD", "CNY"],
@@ -445,12 +403,12 @@ async def test_final_amount_accounts_for_fx_and_converted_fees() -> None:
             FakeNetwork(
                 "hop-1",
                 {"GBP", "EUR"},
-                {("GBP", "EUR"): _quote("GBP->EUR", "5", "1", "0.8")},
+                {("GBP", "EUR"): make_quote("GBP->EUR", "5", "1", "0.8")},
             ),
             FakeNetwork(
                 "hop-2",
                 {"EUR", "CNY"},
-                {("EUR", "CNY"): _quote("EUR->CNY", "10", "1", "9.0")},
+                {("EUR", "CNY"): make_quote("EUR->CNY", "10", "1", "9.0")},
             ),
         ],
         currencies=["GBP", "EUR", "CNY"],
@@ -473,17 +431,17 @@ async def test_router_falls_back_when_best_static_path_cannot_cover_its_fee() ->
             FakeNetwork(
                 "unusable-direct",
                 {"USD", "CNY"},
-                {("USD", "CNY"): _quote("Unusable", "101", "1", "7.0")},
+                {("USD", "CNY"): make_quote("Unusable", "101", "1", "7.0")},
             ),
             FakeNetwork(
                 "hop-1",
                 {"USD", "EUR"},
-                {("USD", "EUR"): _quote("Hop 1", "1", "2", "0.8")},
+                {("USD", "EUR"): make_quote("Hop 1", "1", "2", "0.8")},
             ),
             FakeNetwork(
                 "hop-2",
                 {"EUR", "CNY"},
-                {("EUR", "CNY"): _quote("Hop 2", "1", "2", "9.0")},
+                {("EUR", "CNY"): make_quote("Hop 2", "1", "2", "9.0")},
             ),
         ],
         currencies=["USD", "EUR", "CNY"],
@@ -503,14 +461,14 @@ async def test_find_all_routes_excludes_routes_that_cannot_pay_fixed_fees() -> N
             FakeNetwork(
                 "unusable",
                 {"USD", "CNY"},
-                {("USD", "CNY"): _quote("Unusable", "100", "1", "7.0")},
+                {("USD", "CNY"): make_quote("Unusable", "100", "1", "7.0")},
             ),
             FakeNetwork(
                 "usable",
                 {"USD", "EUR", "CNY"},
                 {
-                    ("USD", "EUR"): _quote("USD->EUR", "1", "2", "0.8"),
-                    ("EUR", "CNY"): _quote("EUR->CNY", "1", "2", "9.0"),
+                    ("USD", "EUR"): make_quote("USD->EUR", "1", "2", "0.8"),
+                    ("EUR", "CNY"): make_quote("EUR->CNY", "1", "2", "9.0"),
                 },
             ),
         ],
@@ -536,12 +494,12 @@ async def test_cheapest_includes_fx_spread_in_all_in_cost() -> None:
             FakeNetwork(
                 "zero-fee-poor-rate",
                 {"USD", "CNY"},
-                {("USD", "CNY"): _quote("Poor rate", "0", "1", "5.0")},
+                {("USD", "CNY"): make_quote("Poor rate", "0", "1", "5.0")},
             ),
             FakeNetwork(
                 "fee-good-rate",
                 {"USD", "CNY"},
-                {("USD", "CNY"): _quote("Good rate", "3", "1", "7.0")},
+                {("USD", "CNY"): make_quote("Good rate", "3", "1", "7.0")},
             ),
         ],
         currencies=["USD", "CNY"],
@@ -560,12 +518,12 @@ async def test_normalization_prevents_single_dimension_from_dominating() -> None
             FakeNetwork(
                 "fast-expensive",
                 {"USD", "CNY"},
-                {("USD", "CNY"): _quote("FastExpensive", "600", "1", "7.0")},
+                {("USD", "CNY"): make_quote("FastExpensive", "600", "1", "7.0")},
             ),
             FakeNetwork(
                 "slow-cheap",
                 {"USD", "CNY"},
-                {("USD", "CNY"): _quote("SlowCheap", "10", "100", "7.0")},
+                {("USD", "CNY"): make_quote("SlowCheap", "10", "100", "7.0")},
             ),
         ],
         currencies=["USD", "CNY"],

@@ -4,8 +4,8 @@ import asyncio
 from decimal import Decimal
 
 import pytest
+from helpers import FakeNetwork, make_quote
 
-from payment_router.core.models import DataSource, NetworkQuote
 from payment_router.decision import DecisionProfile
 from payment_router.networks.base import PaymentNetwork
 from payment_router.service import (
@@ -16,44 +16,6 @@ from payment_router.service import (
     preference_for_profile,
     select_route_for_profile,
 )
-
-
-class FakeNetwork(PaymentNetwork):
-    def __init__(
-        self,
-        name: str | None,
-        supported: set[str],
-        quotes: dict[tuple[str, str], NetworkQuote | None | Exception] | None = None,
-    ) -> None:
-        if name is not None:
-            self._name = name
-        self._supported = supported
-        self._quotes = quotes or {}
-
-    async def get_quote(
-        self,
-        amount: Decimal,
-        from_currency: str,
-        to_currency: str,
-    ) -> NetworkQuote | None:
-        _ = amount
-        result = self._quotes.get((from_currency, to_currency))
-        if isinstance(result, Exception):
-            raise result
-        return result
-
-    def supported_currencies(self) -> set[str]:
-        return self._supported
-
-
-def _quote(network_name: str, fee_usd: str, time_hours: str, fx_rate: str) -> NetworkQuote:
-    return NetworkQuote(
-        network_name=network_name,
-        fee_usd=Decimal(fee_usd),
-        time_hours=Decimal(time_hours),
-        fx_rate=Decimal(fx_rate),
-        data_source=DataSource.INDUSTRY_AVERAGE,
-    )
 
 
 def test_parse_amount_accepts_decimal_strings() -> None:
@@ -110,7 +72,7 @@ def test_build_session_normalizes_request_and_collects_warnings() -> None:
             "Demo",
             {"USD", "CNY"},
             {
-                ("USD", "CNY"): _quote("Demo", "5", "1", "7.0"),
+                ("USD", "CNY"): make_quote("Demo", "5", "1", "7.0"),
                 ("CNY", "USD"): RuntimeError("corridor offline"),
             },
         )

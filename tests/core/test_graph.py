@@ -5,55 +5,12 @@ from decimal import Decimal
 from time import perf_counter
 
 import pytest
+from helpers import FakeNetwork, make_quote
 
 from payment_router.core import fx
 from payment_router.core.graph import NetworkEdge, PaymentGraph
-from payment_router.core.models import DataSource, NetworkQuote
+from payment_router.core.models import NetworkQuote
 from payment_router.networks.base import PaymentNetwork
-
-
-def _quote(
-    network_name: str,
-    fee_usd: str,
-    time_hours: str,
-    fx_rate: str = "1.0",
-    data_source: DataSource = DataSource.INDUSTRY_AVERAGE,
-) -> NetworkQuote:
-    return NetworkQuote(
-        network_name=network_name,
-        fee_usd=Decimal(fee_usd),
-        time_hours=Decimal(time_hours),
-        fx_rate=Decimal(fx_rate),
-        data_source=data_source,
-    )
-
-
-class FakeNetwork(PaymentNetwork):
-    def __init__(
-        self,
-        name: str,
-        supported: set[str],
-        quotes: dict[tuple[str, str], NetworkQuote | None | Exception],
-    ) -> None:
-        self._name = name
-        self._supported = supported
-        self._quotes = quotes
-        self.calls: list[tuple[str, str, Decimal]] = []
-
-    async def get_quote(
-        self,
-        amount: Decimal,
-        from_cur: str,
-        to_cur: str,
-    ) -> NetworkQuote | None:
-        self.calls.append((from_cur, to_cur, amount))
-        result = self._quotes.get((from_cur, to_cur))
-        if isinstance(result, Exception):
-            raise result
-        return result
-
-    def supported_currencies(self) -> set[str]:
-        return self._supported
 
 
 class TimingNetwork(PaymentNetwork):
@@ -98,8 +55,8 @@ async def test_single_network_builds_expected_edges() -> None:
         "fake-wire",
         {"USD", "EUR", "CNY"},
         {
-            ("USD", "EUR"): _quote("fake-wire", "1.25", "2.0"),
-            ("EUR", "CNY"): _quote("fake-wire", "2.50", "5.0", fx_rate="7.8"),
+            ("USD", "EUR"): make_quote("fake-wire", "1.25", "2.0"),
+            ("EUR", "CNY"): make_quote("fake-wire", "2.50", "5.0", fx_rate="7.8"),
         },
     )
     graph = PaymentGraph(
@@ -122,12 +79,12 @@ async def test_parallel_edges_are_preserved_in_multidigraph() -> None:
     network_a = FakeNetwork(
         "wise",
         {"USD", "CNY"},
-        {("USD", "CNY"): _quote("wise", "5.00", "1.5", fx_rate="7.1")},
+        {("USD", "CNY"): make_quote("wise", "5.00", "1.5", fx_rate="7.1")},
     )
     network_b = FakeNetwork(
         "swift",
         {"USD", "CNY"},
-        {("USD", "CNY"): _quote("swift", "25.00", "54.0", fx_rate="6.9")},
+        {("USD", "CNY"): make_quote("swift", "25.00", "54.0", fx_rate="6.9")},
     )
     graph = PaymentGraph(
         networks=[network_a, network_b],
@@ -194,7 +151,7 @@ async def test_provider_exceptions_are_recorded_without_stopping_build() -> None
         {"USD", "EUR", "CNY"},
         {
             ("USD", "CNY"): RuntimeError("quote failed"),
-            ("USD", "EUR"): _quote("faulty", "2.25", "3.0"),
+            ("USD", "EUR"): make_quote("faulty", "2.25", "3.0"),
         },
     )
     graph = PaymentGraph(
@@ -263,7 +220,7 @@ async def test_parallel_edges_with_duplicate_quote_names_are_preserved() -> None
         FakeNetwork(
             f"provider-{index}",
             {"USD", "CNY"},
-            {("USD", "CNY"): _quote("shared-name", str(index), "1")},
+            {("USD", "CNY"): make_quote("shared-name", str(index), "1")},
         )
         for index in (1, 2)
     ]
@@ -283,8 +240,8 @@ async def test_same_currency_self_loops_are_preserved() -> None:
         "loop-test",
         {"USD", "EUR"},
         {
-            ("USD", "USD"): _quote("loop-test", "9.99", "1.0"),
-            ("USD", "EUR"): _quote("loop-test", "1.00", "2.0", fx_rate="0.9"),
+            ("USD", "USD"): make_quote("loop-test", "9.99", "1.0"),
+            ("USD", "EUR"): make_quote("loop-test", "1.00", "2.0", fx_rate="0.9"),
         },
     )
     graph = PaymentGraph(
@@ -306,8 +263,8 @@ async def test_has_path_returns_true_for_two_hop_route() -> None:
         "bridge",
         {"USD", "EUR", "CNY"},
         {
-            ("USD", "EUR"): _quote("bridge", "1.00", "1.0", fx_rate="0.92"),
-            ("EUR", "CNY"): _quote("bridge", "2.00", "2.0", fx_rate="7.8"),
+            ("USD", "EUR"): make_quote("bridge", "1.00", "1.0", fx_rate="0.92"),
+            ("EUR", "CNY"): make_quote("bridge", "2.00", "2.0", fx_rate="7.8"),
         },
     )
     graph = PaymentGraph(
@@ -325,7 +282,7 @@ async def test_has_path_returns_false_for_disconnected_nodes() -> None:
     network = FakeNetwork(
         "partial",
         {"USD", "EUR"},
-        {("USD", "EUR"): _quote("partial", "1.00", "1.0")},
+        {("USD", "EUR"): make_quote("partial", "1.00", "1.0")},
     )
     graph = PaymentGraph(
         networks=[network],
