@@ -276,3 +276,35 @@ def test_decide_shares_cache_with_route() -> None:
     assert decide.status_code == 200
     assert factory.calls == baseline + 1
     assert decide.json()["quotes"]["from_cache"] is True
+
+
+def test_sensitivity_returns_regions_and_stability() -> None:
+    response = _client().get(
+        "/api/sensitivity",
+        params={"source": "USD", "target": "CNY", "amount": "100", "steps": 50},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["request"]["steps"] == 50
+    assert len(payload["regions"]) >= 1
+    first = payload["regions"][0]
+    assert first["cost_weight_start"] == 0.0
+    assert payload["regions"][-1]["cost_weight_end"] == 1.0
+    route = first["route"]
+    assert "total_time_min_hours" in route
+    assert "total_time_max_hours" in route
+    assert payload["balanced_region"] is not None
+    assert isinstance(payload["caveats"], list)
+
+
+def test_sensitivity_returns_404_when_no_route_exists() -> None:
+    def networks() -> list[PaymentNetwork]:
+        return [FakeNetwork("OneWay", {"USD", "CNY"}, {})]
+
+    response = _client(networks).get(
+        "/api/sensitivity",
+        params={"source": "USD", "target": "CNY", "amount": "100"},
+    )
+
+    assert response.status_code == 404

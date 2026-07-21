@@ -31,7 +31,7 @@ overstated summary.
 | `sepa-instant-time` | SEPA Instant | Maximum execution time | `VERIFIED` | 10 seconds | [EPC SEPA Instant Credit Transfer](https://www.europeanpaymentscouncil.eu/what-we-do/sepa-instant-credit-transfer) | Both payment service providers must participate |
 | `sepa-instant-fee` | SEPA Instant | Sender fee | `ESTIMATED` | EUR 0.50 | None | The EPC scheme does not set customer pricing |
 | `swift-topology` | SWIFT | Correspondent-banking structure | `VERIFIED` | Interbank messaging across correspondent relationships | [SWIFT correspondent banking](https://www.swift.com/payments/correspondent-banking) | SWIFT is messaging infrastructure, not one priced rail |
-| `swift-model-parameters` | SWIFT | Hops, fees, time, FX spread | `ESTIMATED` | 3 hops; USD 20 + 0.2%; 18 hours; 1% spread per hop | None | Scenario parameters, not a bank quote or documented median |
+| `swift-model-parameters` | SWIFT | Hops, fees, time, FX spread | `ESTIMATED` | 3 hops; USD 20 + 0.2%; 18 hours (sensitivity band 6-48 hours) per hop; 1% spread | None | Scenario parameters, not a bank quote or documented median; the band feeds displayed timing ranges, not the ranking |
 
 ## How classifications flow into quotes
 

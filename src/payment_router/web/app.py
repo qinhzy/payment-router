@@ -17,7 +17,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from payment_router import service
+from payment_router import sensitivity, service
 from payment_router.core import fx
 from payment_router.decision import DecisionProfile, build_decision_board, summarize_tradeoff
 from payment_router.networks.base import PaymentNetwork
@@ -65,7 +65,7 @@ def _default_explainer() -> Explainer | None:
 
 
 class ExplainRequest(BaseModel):
-    kind: Literal["route", "decide"]
+    kind: Literal["route", "decide", "sensitivity"]
     data: dict[str, object]
     lang: str = Field(default="en", max_length=35)
 
@@ -303,6 +303,35 @@ def create_app(
             "quotes": quotes_meta,
             "decisions": [schemas.decision_to_json(decision) for decision in decisions],
             "tradeoff": schemas.tradeoff_to_json(tradeoff) if tradeoff is not None else None,
+            "warnings": [schemas.warning_to_json(warning) for warning in session.warnings],
+        }
+
+    @application.get("/api/sensitivity")
+    async def sensitivity_endpoint(
+        source: _CurrencyParam,
+        target: _CurrencyParam,
+        amount: _AmountParam,
+        steps: Annotated[int, Query(ge=10, le=400)] = 100,
+    ) -> dict[str, object]:
+        session, quotes_meta = await build_session(source, target, amount)
+        report = sensitivity.analyze(
+            session.router,
+            session.source_currency,
+            session.target_currency,
+            session.amount,
+            steps=steps,
+        )
+        if not report.regions:
+            raise no_route_error(session)
+        return {
+            "request": {
+                "source": session.source_currency,
+                "target": session.target_currency,
+                "amount": str(session.amount),
+                "steps": steps,
+            },
+            "quotes": quotes_meta,
+            **schemas.sensitivity_to_json(report),
             "warnings": [schemas.warning_to_json(warning) for warning in session.warnings],
         }
 

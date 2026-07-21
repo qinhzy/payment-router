@@ -14,7 +14,7 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
-from payment_router import service
+from payment_router import sensitivity, service
 from payment_router.core import fx
 from payment_router.decision import (
     DecisionProfile,
@@ -179,6 +179,79 @@ def decide_command(
     _render_decision_board(decisions, parsed_amount, show_diagrams=show_diagrams)
 
 
+@app.command("sensitivity")
+def sensitivity_command(
+    from_currency: Annotated[str, typer.Argument(help="Source currency code.")],
+    to_currency: Annotated[str, typer.Argument(help="Target currency code.")],
+    amount: Annotated[str, typer.Argument(help="Amount to send.")],
+    steps: Annotated[
+        int,
+        typer.Option("--steps", min=10, max=400, help="Sweep resolution across the weight axis."),
+    ] = 100,
+    fx_mode: Annotated[FxMode | None, _FX_OPTION] = None,
+) -> None:
+    """Sweep the cost/time preference and show where the best route flips."""
+    _activate_fx(fx_mode)
+    source_currency, target_currency, parsed_amount, router = _prepare_router(
+        from_currency,
+        to_currency,
+        amount,
+    )
+    report = sensitivity.analyze(
+        router,
+        source_currency,
+        target_currency,
+        parsed_amount,
+        steps=steps,
+    )
+    if not report.regions:
+        _print_error(service.no_route_message(source_currency, target_currency, parsed_amount))
+        raise typer.Exit(code=1)
+
+    table = Table(
+        title="Preference sweep · cost weight 0 (fastest) → 1 (cheapest)",
+        header_style="bold white",
+    )
+    table.add_column("Cost weight", justify="right")
+    table.add_column("Path", style="cyan")
+    table.add_column("Networks")
+    table.add_column("Fee", justify="right")
+    table.add_column("ETA", justify="right")
+    table.add_column("ETA range", justify="right", style="bright_blue")
+    for region in report.regions:
+        route = region.route
+        path, networks = region.signature
+        table.add_row(
+            f"{region.cost_weight_start:.2f} – {region.cost_weight_end:.2f}",
+            " → ".join(path),
+            ", ".join(networks),
+            f"${route.total_fee_usd.quantize(Decimal('0.01')):.2f}",
+            f"{format_hours(route.total_time_hours)}h",
+            f"{format_hours(route.total_time_min_hours)}–"
+            f"{format_hours(route.total_time_max_hours)}h",
+        )
+    console.print(table)
+
+    if report.balanced_region is not None:
+        console.print(
+            Panel(
+                "The balanced (0.50) choice holds for cost weights "
+                f"{report.balanced_region.cost_weight_start:.2f}–"
+                f"{report.balanced_region.cost_weight_end:.2f}.",
+                title="Stability",
+                border_style="green",
+            )
+        )
+    if report.caveats:
+        console.print(
+            Panel(
+                "\n".join(f"• {caveat}" for caveat in report.caveats),
+                title="Timing caveats",
+                border_style="yellow",
+            ),
+        )
+
+
 @app.command("networks")
 def networks_command() -> None:
     networks = _instantiate_networks()
@@ -289,6 +362,13 @@ def _render_route(route) -> None:
     )
     summary.append("Total time: ", style="white")
     summary.append(f"{format_hours(route.total_time_hours)} hours\n", style="bright_blue")
+    if route.total_time_min_hours != route.total_time_max_hours:
+        summary.append("Time range: ", style="white")
+        summary.append(
+            f"{format_hours(route.total_time_min_hours)}–"
+            f"{format_hours(route.total_time_max_hours)} hours\n",
+            style="bright_blue",
+        )
     summary.append("Final amount: ", style="white")
     summary.append(
         f"{route.final_amount.quantize(Decimal('0.01')):.2f} {route.target_currency}",

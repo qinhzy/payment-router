@@ -349,6 +349,8 @@ class PaymentRouter:
                 network_name=edge.network_name,
                 fee_usd=edge.fee_usd,
                 time_hours=Decimal(str(edge.time_hours)),
+                time_min_hours=Decimal(str(edge.time_min_hours)),
+                time_max_hours=Decimal(str(edge.time_max_hours)),
                 currency_in=edge.from_currency,
                 currency_out=edge.to_currency,
                 fx_rate=edge.fx_rate,
@@ -368,6 +370,14 @@ class PaymentRouter:
             hops=hops,
             total_fee_usd=total_fee_usd,
             total_time_hours=total_time_hours,
+            total_time_min_hours=sum(
+                (Decimal(str(edge.time_min_hours)) for edge in edges),
+                start=Decimal("0"),
+            ),
+            total_time_max_hours=sum(
+                (Decimal(str(edge.time_max_hours)) for edge in edges),
+                start=Decimal("0"),
+            ),
             source_currency=edges[0].from_currency,
             target_currency=edges[-1].to_currency,
             source_amount=amount,

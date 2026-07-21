@@ -22,6 +22,8 @@ class NetworkEdge:
     to_currency: str
     fee_usd: Decimal
     time_hours: Decimal
+    time_min_hours: Decimal
+    time_max_hours: Decimal
     fx_rate: Decimal
     data_source: DataSource
     fee_data_source: DataSource
@@ -164,6 +166,8 @@ class PaymentGraph:
             to_currency=to_currency,
             fee_usd=quote.fee_usd,
             time_hours=quote.time_hours,
+            time_min_hours=quote.time_min_hours or quote.time_hours,
+            time_max_hours=quote.time_max_hours or quote.time_hours,
             fx_rate=quote.fx_rate,
             data_source=quote.data_source,
             fee_data_source=quote.fee_data_source,
