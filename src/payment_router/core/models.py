@@ -64,12 +64,33 @@ class _SourcedModel(_FrozenModel):
         return tuple(source for source in DataSource if source in sources)
 
 
-class Hop(_SourcedModel):
+class _TimedModel(_SourcedModel):
+    """Point time estimate plus an optional [min, max] bounds interval.
+
+    Bounds default to the point estimate, so single-valued quotes stay
+    unchanged. When provided, they must bracket the point estimate.
+    """
+
+    time_hours: Decimal = Field(ge=0)
+    time_min_hours: Decimal | None = Field(default=None, ge=0)
+    time_max_hours: Decimal | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_time_bounds(self) -> _TimedModel:
+        if self.time_min_hours is None:
+            object.__setattr__(self, "time_min_hours", self.time_hours)
+        if self.time_max_hours is None:
+            object.__setattr__(self, "time_max_hours", self.time_hours)
+        if not (self.time_min_hours <= self.time_hours <= self.time_max_hours):
+            raise ValueError("time bounds must satisfy min <= expected <= max")
+        return self
+
+
+class Hop(_TimedModel):
     from_node: str
     to_node: str
     network_name: str
     fee_usd: Decimal = Field(ge=0)
-    time_hours: Decimal = Field(ge=0)
     currency_in: str
     currency_out: str
     fx_rate: Decimal = Field(gt=0)
@@ -79,15 +100,26 @@ class Route(_FrozenModel):
     hops: list[Hop]
     total_fee_usd: Decimal = Field(ge=0)
     total_time_hours: Decimal = Field(ge=0)
+    total_time_min_hours: Decimal | None = Field(default=None, ge=0)
+    total_time_max_hours: Decimal | None = Field(default=None, ge=0)
     source_currency: str
     target_currency: str
     source_amount: Decimal = Field(gt=0)
     final_amount: Decimal = Field(ge=0)
     routing_preference: RoutingPreference | None = None
 
+    @model_validator(mode="after")
+    def validate_total_time_bounds(self) -> Route:
+        if self.total_time_min_hours is None:
+            object.__setattr__(self, "total_time_min_hours", self.total_time_hours)
+        if self.total_time_max_hours is None:
+            object.__setattr__(self, "total_time_max_hours", self.total_time_hours)
+        if not (self.total_time_min_hours <= self.total_time_hours <= self.total_time_max_hours):
+            raise ValueError("total time bounds must satisfy min <= expected <= max")
+        return self
 
-class NetworkQuote(_SourcedModel):
+
+class NetworkQuote(_TimedModel):
     network_name: str
     fee_usd: Decimal = Field(ge=0)
-    time_hours: Decimal = Field(ge=0)
     fx_rate: Decimal = Field(gt=0)

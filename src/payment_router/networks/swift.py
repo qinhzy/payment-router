@@ -32,6 +32,8 @@ class SWIFTNetwork(PaymentNetwork):
         hop_fixed_fee_usd: Decimal = Decimal("20"),
         hop_percentage_fee: Decimal = Decimal("0.002"),
         hop_time_hours: float = 18.0,
+        hop_time_min_hours: float = 6.0,
+        hop_time_max_hours: float = 48.0,
         hop_fx_spread: Decimal = Decimal("0.01"),
     ) -> None:
         if isinstance(num_hops, bool) or not isinstance(num_hops, int) or num_hops < 1:
@@ -43,6 +45,14 @@ class SWIFTNetwork(PaymentNetwork):
         normalized_time = Decimal(str(hop_time_hours))
         if not normalized_time.is_finite() or normalized_time < 0:
             raise ValueError("hop_time_hours must be a non-negative finite number")
+        normalized_time_min = Decimal(str(hop_time_min_hours))
+        normalized_time_max = Decimal(str(hop_time_max_hours))
+        if not (
+            normalized_time_min.is_finite()
+            and normalized_time_max.is_finite()
+            and Decimal("0") <= normalized_time_min <= normalized_time <= normalized_time_max
+        ):
+            raise ValueError("hop time bounds must satisfy 0 <= min <= expected <= max")
         if not hop_fx_spread.is_finite() or not Decimal("0") <= hop_fx_spread < 1:
             raise ValueError("hop_fx_spread must be at least 0 and less than 1")
 
@@ -50,6 +60,8 @@ class SWIFTNetwork(PaymentNetwork):
         self._hop_fixed_fee_usd = hop_fixed_fee_usd
         self._hop_percentage_fee = hop_percentage_fee
         self._hop_time_hours = normalized_time
+        self._hop_time_min_hours = normalized_time_min
+        self._hop_time_max_hours = normalized_time_max
         self._hop_fx_spread = hop_fx_spread
 
     async def get_quote(
@@ -71,6 +83,8 @@ class SWIFTNetwork(PaymentNetwork):
         fee_per_hop_usd = self._hop_fixed_fee_usd + (amount_usd * self._hop_percentage_fee)
         total_fee_usd = Decimal(self._num_hops) * fee_per_hop_usd
         total_time_hours = Decimal(self._num_hops) * self._hop_time_hours
+        total_time_min = Decimal(self._num_hops) * self._hop_time_min_hours
+        total_time_max = Decimal(self._num_hops) * self._hop_time_max_hours
 
         if source_currency == target_currency:
             fx_rate = fx.get_mid_rate(source_currency, target_currency)
@@ -83,6 +97,8 @@ class SWIFTNetwork(PaymentNetwork):
             network_name="SWIFT",
             fee_usd=total_fee_usd,
             time_hours=total_time_hours,
+            time_min_hours=total_time_min,
+            time_max_hours=total_time_max,
             fx_rate=fx_rate,
             data_source=DataSource.ESTIMATED,
             fee_data_source=DataSource.ESTIMATED,

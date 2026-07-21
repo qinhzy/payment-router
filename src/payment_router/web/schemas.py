@@ -14,6 +14,7 @@ from __future__ import annotations
 from payment_router.core.models import DataSource, Hop, Route
 from payment_router.decision import DecisionTradeoff, RouteDecision
 from payment_router.provenance import ProvenanceRecord
+from payment_router.sensitivity import SensitivityReport, WeightRegion
 from payment_router.service import BuildWarning
 from payment_router.visualizer import (
     format_amount,
@@ -47,6 +48,8 @@ def route_to_json(route: Route) -> dict[str, object]:
         "hops": [hop_to_json(hop) for hop in route.hops],
         "total_fee_usd": format_amount(route.total_fee_usd),
         "total_time_hours": format_hours(route.total_time_hours),
+        "total_time_min_hours": format_hours(route.total_time_min_hours),
+        "total_time_max_hours": format_hours(route.total_time_max_hours),
         "source_currency": route.source_currency,
         "target_currency": route.target_currency,
         "source_amount": format_amount(route.source_amount),
@@ -70,6 +73,25 @@ def tradeoff_to_json(tradeoff: DecisionTradeoff) -> dict[str, object]:
         "balanced_fee_delta_usd": format_amount(tradeoff.balanced_fee_delta_usd),
         "balanced_hours_saved_vs_cheapest": format_hours(tradeoff.balanced_hours_saved_vs_cheapest),
         "balanced_receive_delta": format_amount(tradeoff.balanced_receive_delta),
+    }
+
+
+def region_to_json(region: WeightRegion) -> dict[str, object]:
+    return {
+        "cost_weight_start": round(region.cost_weight_start, 4),
+        "cost_weight_end": round(region.cost_weight_end, 4),
+        "route": route_to_json(region.route),
+    }
+
+
+def sensitivity_to_json(report: SensitivityReport) -> dict[str, object]:
+    return {
+        "steps": report.steps,
+        "regions": [region_to_json(region) for region in report.regions],
+        "balanced_region": (
+            region_to_json(report.balanced_region) if report.balanced_region is not None else None
+        ),
+        "caveats": list(report.caveats),
     }
 
 

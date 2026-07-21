@@ -11,6 +11,7 @@
   const swapButton = $("#swap-button");
   const routeButton = $("#route-button");
   const decideButton = $("#decide-button");
+  const sensitivityButton = $("#sensitivity-button");
   const alertsBox = $("#alerts");
   const warningsBox = $("#warnings");
   const resultsBox = $("#results");
@@ -199,15 +200,21 @@
     resultsBox.replaceChildren(card);
   }
 
+  function buttonForKind(kind) {
+    if (kind === "decide") return decideButton;
+    if (kind === "sensitivity") return sensitivityButton;
+    return routeButton;
+  }
+
   function setBusy(busy, activeButton) {
-    [routeButton, decideButton].forEach((button) => {
+    [routeButton, decideButton, sensitivityButton].forEach((button) => {
       button.disabled = busy;
     });
     if (busy) {
       activeButton.dataset.label = activeButton.textContent;
       activeButton.replaceChildren(svg('<span class="spinner"></span>'), document.createTextNode(" Working…"));
     } else {
-      [routeButton, decideButton].forEach((button) => {
+      [routeButton, decideButton, sensitivityButton].forEach((button) => {
         if (button.dataset.label) {
           button.textContent = button.dataset.label;
           delete button.dataset.label;
@@ -255,8 +262,8 @@
       to: request.target,
       amount: request.amount,
     });
-    if (kind === "decide") {
-      params.set("view", "decide");
+    if (kind === "decide" || kind === "sensitivity") {
+      params.set("view", kind);
     } else {
       params.set("profile", request.profile);
       params.set("top_n", request.top_n);
@@ -270,8 +277,9 @@
     const target = params.get("to");
     const amount = params.get("amount");
     if (!source || !target || !amount) return null;
+    const view = params.get("view");
     return {
-      kind: params.get("view") === "decide" ? "decide" : "route",
+      kind: view === "decide" || view === "sensitivity" ? view : "route",
       source: source.toUpperCase(),
       target: target.toUpperCase(),
       amount,
@@ -362,11 +370,17 @@
         el("span", "sep", "→"),
         document.createTextNode(item.target),
         el("span", "sep", "·"),
-        document.createTextNode(item.kind === "decide" ? "compare" : item.profile)
+        document.createTextNode(
+          item.kind === "decide"
+            ? "compare"
+            : item.kind === "sensitivity"
+              ? "sensitivity"
+              : item.profile
+        )
       );
       chip.addEventListener("click", () => {
         applyRequestToForm(item);
-        runRequest(item.kind, item.kind === "decide" ? decideButton : routeButton);
+        runRequest(item.kind, buttonForKind(item.kind));
       });
       recentsBox.append(chip);
     });
@@ -539,7 +553,10 @@
       statTile(
         "Estimated time",
         valueWithUnit(humanizeHours(route.total_time_hours)),
-        `${route.total_time_hours} hours`
+        route.total_time_min_hours !== route.total_time_max_hours
+          ? `range ${humanizeHours(route.total_time_min_hours)} – ` +
+              `${humanizeHours(route.total_time_max_hours)}`
+          : `${route.total_time_hours} hours`
       )
     );
     card.append(stats);
@@ -685,6 +702,159 @@
           document.createTextNode(".")
         );
       }
+      note.append(svg(ICONS.note), body);
+      nodes.push(note);
+    }
+    resultsBox.replaceChildren(...nodes);
+  }
+
+  /* ---------- sensitivity rendering ---------- */
+
+  function parseHours(value) {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function renderSensitivity(data) {
+    // Stable slot per distinct route, in first-appearance order.
+    const slots = new Map();
+    data.regions.forEach((region) => {
+      const key = region.route.path.join(">") + "|" + region.route.hops.map((h) => h.network).join(">");
+      if (!slots.has(key)) {
+        slots.set(key, { index: slots.size, route: region.route, key });
+      }
+    });
+    const slotColor = (index) =>
+      index < 8 ? `var(--series-${index + 1})` : "var(--series-other)";
+    const routeNetworks = (route) => [...new Set(route.hops.map((h) => h.network))].join(", ");
+    const slotOf = (region) =>
+      slots.get(
+        region.route.path.join(">") + "|" + region.route.hops.map((h) => h.network).join(">")
+      );
+
+    const panel = el("section", "panel");
+    const header = el("div", "panel-header");
+    header.append(el("h2", "", "Preference sensitivity"));
+    header.append(
+      el("span", "hint", "Where the winning route flips as the cost/time weight moves")
+    );
+    panel.append(header);
+
+    const wrap = el("div", "regime-wrap");
+    const strip = el("div", "regime-strip");
+    data.regions.forEach((region) => {
+      const slot = slotOf(region);
+      const segment = el("div", "regime-segment");
+      const share = Math.max(
+        (region.cost_weight_end - region.cost_weight_start) * 100,
+        0.8
+      );
+      segment.style.width = `${share}%`;
+      segment.style.background = slotColor(slot.index);
+      segment.title =
+        `${region.route.path.join(" → ")} · ${routeNetworks(region.route)} · cost weight ` +
+        `${region.cost_weight_start.toFixed(2)}–${region.cost_weight_end.toFixed(2)}`;
+      strip.append(segment);
+    });
+    strip.append(el("span", "regime-marker"));
+    wrap.append(strip);
+
+    const axis = el("div", "regime-axis");
+    axis.append(el("span", "", "0 · fastest"));
+    axis.append(el("span", "", "0.5 · balanced"));
+    axis.append(el("span", "", "1 · cheapest"));
+    wrap.append(axis);
+
+    const legend = el("div", "regime-legend");
+    slots.forEach((slot) => {
+      const row = el("div", "legend-row");
+      const dot = el("span", "dot");
+      dot.style.background = slotColor(slot.index);
+      row.append(dot);
+      row.append(el("span", "legend-path", slot.route.path.join(" → ")));
+      row.append(
+        el(
+          "span",
+          "legend-meta",
+          `${routeNetworks(slot.route)} · ` +
+            `fee $${fmtNumber(slot.route.total_fee_usd)} · ` +
+            `eta ${humanizeHours(slot.route.total_time_hours)}`
+        )
+      );
+      legend.append(row);
+    });
+    wrap.append(legend);
+    panel.append(wrap);
+
+    // Timing ranges from the per-hop bounds model.
+    const rangeHeader = el("div", "panel-header");
+    rangeHeader.append(el("h2", "", "Timing ranges"));
+    rangeHeader.append(
+      el("span", "hint", "Registered per-hop bounds aggregated along each route")
+    );
+    panel.append(rangeHeader);
+    const rows = el("div", "range-rows");
+    const globalMax = Math.max(
+      ...[...slots.values()].map((slot) => parseHours(slot.route.total_time_max_hours)),
+      0.0001
+    );
+    slots.forEach((slot) => {
+      const route = slot.route;
+      const min = parseHours(route.total_time_min_hours);
+      const max = parseHours(route.total_time_max_hours);
+      const expected = parseHours(route.total_time_hours);
+      const row = el("div", "range-row");
+      const label = el("span", "range-label");
+      label.append(document.createTextNode(route.path.join(" → ")));
+      label.append(el("span", "range-networks", routeNetworks(route)));
+      row.append(label);
+      const track = el("div", "range-track");
+      const bar = el("span", "range-bar");
+      bar.style.left = `${(min / globalMax) * 100}%`;
+      bar.style.width = `${Math.max(((max - min) / globalMax) * 100, 0.5)}%`;
+      bar.style.background = slotColor(slot.index);
+      track.append(bar);
+      const tick = el("span", "range-tick");
+      tick.style.left = `calc(${(expected / globalMax) * 100}% - 1px)`;
+      tick.style.background = slotColor(slot.index);
+      track.append(tick);
+      row.append(track);
+      row.append(
+        el(
+          "span",
+          "range-value",
+          min === max
+            ? humanizeHours(route.total_time_hours)
+            : `${humanizeHours(route.total_time_min_hours)} – ` +
+              `${humanizeHours(route.total_time_max_hours)}` +
+              ` · point ${humanizeHours(route.total_time_hours)}`
+        )
+      );
+      rows.append(row);
+    });
+    panel.append(rows);
+
+    if (data.caveats && data.caveats.length > 0) {
+      const caveats = el("div", "caveat-rows");
+      data.caveats.forEach((caveat) => caveats.append(el("div", "", `⚠ ${caveat}`)));
+      panel.append(caveats);
+    }
+
+    const nodes = [panel];
+    const meta = quotesMetaNode(data.quotes);
+    if (meta) nodes.unshift(meta);
+    if (data.balanced_region) {
+      const note = el("div", "tradeoff-note");
+      const body = el("div");
+      body.append(el("strong", "", "Stability "));
+      body.append(
+        document.createTextNode(
+          `The balanced (0.50) choice — ${data.balanced_region.route.path.join(" → ")} via ` +
+            `${routeNetworks(data.balanced_region.route)} — holds for cost weights ` +
+            `${data.balanced_region.cost_weight_start.toFixed(2)}` +
+            `–${data.balanced_region.cost_weight_end.toFixed(2)}.`
+        )
+      );
       note.append(svg(ICONS.note), body);
       nodes.push(note);
     }
@@ -906,17 +1076,22 @@
     showSkeleton();
     try {
       const request = currentRequest();
+      const corridor = {
+        source: request.source,
+        target: request.target,
+        amount: request.amount,
+      };
       const data =
         kind === "decide"
-          ? await apiGet("/api/decide", {
-              source: request.source,
-              target: request.target,
-              amount: request.amount,
-            })
-          : await apiGet("/api/route", request);
+          ? await apiGet("/api/decide", corridor)
+          : kind === "sensitivity"
+            ? await apiGet("/api/sensitivity", corridor)
+            : await apiGet("/api/route", request);
       showWarnings(data.warnings);
       if (kind === "decide") {
         renderDecisions(data);
+      } else if (kind === "sensitivity") {
+        renderSensitivity(data);
       } else {
         renderRoutes(data);
       }
@@ -938,6 +1113,9 @@
   });
 
   decideButton.addEventListener("click", () => runRequest("decide", decideButton));
+  sensitivityButton.addEventListener("click", () =>
+    runRequest("sensitivity", sensitivityButton)
+  );
 
   const initialEmptyState = resultsBox.firstElementChild;
 
@@ -945,7 +1123,7 @@
     const request = requestFromUrl();
     if (request) {
       applyRequestToForm(request);
-      runRequest(request.kind, request.kind === "decide" ? decideButton : routeButton);
+      runRequest(request.kind, buttonForKind(request.kind));
     } else {
       clearFeedback();
       resultsBox.replaceChildren(initialEmptyState);
@@ -1006,7 +1184,7 @@
       const urlRequest = requestFromUrl();
       if (urlRequest) {
         applyRequestToForm(urlRequest);
-        runRequest(urlRequest.kind, urlRequest.kind === "decide" ? decideButton : routeButton);
+        runRequest(urlRequest.kind, buttonForKind(urlRequest.kind));
       }
     } catch (error) {
       showError(

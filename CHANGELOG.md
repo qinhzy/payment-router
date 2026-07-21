@@ -3,6 +3,35 @@
 All notable user-visible changes are recorded here. The project follows
 [Semantic Versioning](https://semver.org/) while it approaches a stable API.
 
+## [0.5.0] - Unreleased
+
+### Added
+
+- per-hop timing bounds: every quote and hop now carries a `[min, max]`
+  time window alongside the expected value. SEPA rails use scheme-maximum
+  semantics (`0 <= expected <= scheme maximum`); the SWIFT scenario carries a
+  registered 6-48 hour per-hop band; Wise live estimates stay point values
+  until a source-backed band exists;
+- route-level timing ranges: totals aggregate hop bounds, the CLI prints a
+  `Time range` line, and the console's ETA tile shows the range under the
+  expected value;
+- `remit sensitivity SOURCE TARGET AMOUNT [--steps N]`: sweeps the
+  cost/time weight from all-time to all-cost, prints every weight region
+  with its winning route, and reports how stable the balanced (0.5/0.5)
+  choice is before the ranking flips;
+- `/api/sensitivity` endpoint and a console **Sensitivity** view: a regime
+  strip showing which route wins across the weight axis, per-route timing
+  range bars, a balanced-stability note, and qualitative timing caveats;
+- timing caveats are structural, not invented numbers: the analysis flags
+  later-hop `VERIFIED` delivery estimates that assume an already-funded
+  balance, and marks `ESTIMATED` timing bands as scenario values.
+
+### Changed
+
+- the SWIFT scenario registers its per-hop timing band (6-48 hours) in the
+  provenance registry; the band feeds displayed ranges only and does not
+  change how routes are ranked.
+
 ## [0.4.0] - Unreleased
 
 ### Added

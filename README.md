@@ -36,6 +36,7 @@ inspectable:
 uv run remit route USD CNY 1000 --prefer=cheapest
 uv run remit route USD CNY 1000 --top-n=3
 uv run remit decide USD CNY 1000
+uv run remit sensitivity USD CNY 1000
 uv run remit route EUR EUR 1000 --top-n=3
 uv run remit sources
 uv run remit serve
@@ -43,7 +44,8 @@ uv run remit serve
 
 The CLI renders a selected route, hop-by-hop fees and timing, recipient amount,
 and a Mermaid diagram. `decide` compares cheapest, fastest, and balanced
-profiles against the same graph.
+profiles against the same graph. `sensitivity` sweeps the cost/time weight and
+shows exactly where the winning route flips.
 
 ## Web console
 
@@ -60,6 +62,9 @@ the same routing engine the CLI uses:
 - provenance badges on every route and hop, provider warnings, and the full
   auditable source registry;
 - a profile-comparison chart when the three profiles pick different routes;
+- a **Sensitivity** view: a regime strip showing which route wins as the
+  cost/time weight sweeps from all-time to all-cost, per-route timing range
+  bars, a balanced-stability note, and qualitative timing caveats;
 - shareable URLs (every query updates the address bar and can be bookmarked or
   sent; the back button restores previous results) and recent-search chips;
 - a short-lived quote session cache so switching preference or top-N reuses
@@ -87,7 +92,7 @@ The default model is `claude-opus-4-8`; set `PAYMENT_ROUTER_AI_MODEL` to
 override. The API surface is `POST /api/explain` (server-sent events).
 
 The JSON API behind it is documented at `/api/docs` (`/api/meta`, `/api/route`,
-`/api/decide`, `/api/sources`). The console is a local tool, not a deployment
+`/api/decide`, `/api/sensitivity`, `/api/sources`). The console is a local tool, not a deployment
 target: it adds no authentication, persistence, or payment initiation surface.
 
 ## What is implemented
@@ -104,6 +109,11 @@ target: it adds no authentication, persistence, or payment initiation surface.
   explicit stale/fallback behavior.
 - **Routing:** normalized cost/time Dijkstra selection plus edge-expanded top-N
   enumeration that preserves parallel payment networks.
+- **Timing ranges and sensitivity:** every hop carries a `[min, max]` time
+  window (SEPA scheme-maximum semantics, a registered SWIFT scenario band),
+  routes aggregate them into displayed ranges, and `remit sensitivity` sweeps
+  the cost/time weight to show where the winning route flips and how stable
+  the balanced choice is.
 - **Resilience:** bounded concurrent quote collection, deterministic warnings,
   invalid-response isolation, and fallback to the next fundable route.
 - **Explanations:** terminal decision board, Markdown comparisons, and Mermaid
@@ -111,7 +121,7 @@ target: it adds no authentication, persistence, or payment initiation surface.
 - **Web console:** optional FastAPI backend plus a dependency-free single-page
   frontend sharing the CLI's routing service layer (`remit serve`).
 - **Quality:** Python 3.11-3.13 CI, strict pytest configuration, expanded Ruff
-  rules, package-build validation, and 143 automated tests.
+  rules, package-build validation, and 155 automated tests.
 
 ## Quick start
 
@@ -196,8 +206,9 @@ The detailed algorithm, invariants, and boundaries are documented in
 
 - **v0.3:** local web console over a shared routing service layer (shipped).
 - **v0.4:** pluggable ECB/Frankfurter FX provider with cached, reproducible
-  snapshots and explicit fallback behavior (this release).
-- **v0.5:** independent multi-hop timing model and sensitivity analysis.
+  snapshots and explicit fallback behavior (shipped).
+- **v0.5:** independent multi-hop timing model and sensitivity analysis
+  (this release).
 - **v0.6:** source-backed corridor expansion and an RMB-focused CIPS scenario.
 - **v0.7:** historical comparison without turning the simulator into an online
   payment service.

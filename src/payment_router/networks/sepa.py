@@ -46,10 +46,14 @@ class SEPANetwork(PaymentNetwork):
         fee_eur = SCT_INST_FEE_EUR if self._instant else SCT_FEE_EUR
         time_hours = SCT_INST_TIME_HOURS if self._instant else SCT_TIME_HOURS
 
+        # The scheme rules state maximum execution times, so the modelled
+        # point estimate is the upper bound and the lower bound is zero.
         return NetworkQuote(
             network_name=self._name,
             fee_usd=fx.to_usd(fee_eur, "EUR"),
             time_hours=time_hours,
+            time_min_hours=Decimal("0"),
+            time_max_hours=time_hours,
             fx_rate=Decimal("1.0"),
             data_source=DataSource.ESTIMATED,
             fee_data_source=DataSource.ESTIMATED,

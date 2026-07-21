@@ -60,6 +60,33 @@ class when a conversion participates.
 The four-currency MVP bounds graph size. A future broad-currency version will
 need additional candidate limits and performance benchmarks.
 
+## Timing model and sensitivity
+
+Every quote, hop, and route carries a `[time_min, time_max]` window around the
+expected time. Bounds default to the expected value when a network has nothing
+better to claim, and model validation enforces `min <= expected <= max`:
+
+- SEPA rails use scheme-maximum semantics: the published maximum execution
+  time is the upper bound and settlement may complete any time before it
+  (`min = 0`);
+- the SWIFT scenario carries a per-hop 6-48 hour band registered as
+  `ESTIMATED` in the provenance registry;
+- Wise live delivery estimates remain point values until a source-backed
+  band exists.
+
+The bounds are display-and-analysis data only: route ranking still uses the
+expected time, so adding a band never changes which route wins.
+
+`sensitivity.py` sweeps the cost/time weight `alpha` from 0 (all-time) to 1
+(all-cost) in uniform steps, routes at each weight, and merges consecutive
+weights that pick the same route into weight regions. The report includes the
+region containing the balanced 0.5/0.5 weight (how far the weight can drift
+before the choice flips) and qualitative caveats: later-hop `VERIFIED`
+delivery estimates that assume an already-funded balance, and `ESTIMATED`
+timing bands that are scenario values. Caveats stay qualitative because the
+registry has no evidence for a numeric later-hop correction; inventing one
+would violate the provenance contract.
+
 ## Monetary replay
 
 At every hop:
@@ -82,9 +109,10 @@ always agree on routing behavior and error messages.
 
 - `cli.py` renders Rich tables, panels, and Mermaid source in the terminal.
 - `web/app.py` is a FastAPI application (optional `web` extra) exposing
-  `/api/meta`, `/api/route`, `/api/decide`, and `/api/sources`, and serving the
-  static single-page console from `web/static/`. JSON amounts reuse the exact
-  CLI formatting helpers, so both frontends display identical numbers.
+  `/api/meta`, `/api/route`, `/api/decide`, `/api/sensitivity`, and
+  `/api/sources`, and serving the static single-page console from
+  `web/static/`. JSON amounts reuse the exact CLI formatting helpers, so both
+  frontends display identical numbers.
 - The web app keeps a short-lived cache of built routing sessions (default
   60 seconds, keyed by source, target, and amount) so switching preference or
   top-N reuses the same quotes instead of re-querying live providers. Only
