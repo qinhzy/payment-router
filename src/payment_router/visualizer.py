@@ -7,9 +7,9 @@ from payment_router.core.models import Route
 
 
 def route_to_mermaid(route: Route) -> str:
-    node_currencies = _node_currencies(route)
+    node_currencies = route_node_currencies(route)
     node_ids = _node_ids(node_currencies)
-    node_amounts = _node_amounts(route)
+    node_amounts = route_node_amounts(route)
 
     lines = ["flowchart LR"]
     for node_id, currency, amount in zip(
@@ -18,7 +18,7 @@ def route_to_mermaid(route: Route) -> str:
         node_amounts,
         strict=True,
     ):
-        lines.append(f'    {node_id}["{currency}<br/>{_format_amount(amount)}"]')
+        lines.append(f'    {node_id}["{currency}<br/>{format_amount(amount)}"]')
 
     for hop, from_node, to_node in zip(
         route.hops,
@@ -28,8 +28,8 @@ def route_to_mermaid(route: Route) -> str:
     ):
         edge_label = (
             f"{hop.network_name}<br/>"
-            f"fee: ${_format_amount(hop.fee_usd)}<br/>"
-            f"{_format_hours(hop.time_hours)}h"
+            f"fee: ${format_amount(hop.fee_usd)}<br/>"
+            f"{format_hours(hop.time_hours)}h"
         )
         lines.append(f'    {from_node} -->|"{edge_label}"| {to_node}')
 
@@ -45,20 +45,21 @@ def routes_to_comparison_table(routes: list[Route]) -> str:
         "| --- | ---: | ---: | ---: | --- |",
     ]
     for index, route in enumerate(routes, start=1):
-        path = " → ".join(_node_currencies(route))
+        path = " → ".join(route_node_currencies(route))
         lines.append(
             "| "
             f"Route {index} | "
-            f"{_format_amount(route.total_fee_usd)} | "
-            f"{_format_hours(route.total_time_hours)} | "
-            f"{_format_amount(route.final_amount)} {route.target_currency} | "
+            f"{format_amount(route.total_fee_usd)} | "
+            f"{format_hours(route.total_time_hours)} | "
+            f"{format_amount(route.final_amount)} {route.target_currency} | "
             f"{path} |"
         )
 
     return "\n".join(lines)
 
 
-def _node_currencies(route: Route) -> list[str]:
+def route_node_currencies(route: Route) -> list[str]:
+    """Currency at each node of the route, aligned with ``route_node_amounts``."""
     if not route.hops:
         return [route.source_currency]
     return [route.source_currency, *[hop.to_node for hop in route.hops]]
@@ -70,7 +71,8 @@ def _node_ids(currencies: list[str]) -> list[str]:
     return [f"{currency}_{index}" for index, currency in enumerate(currencies)]
 
 
-def _node_amounts(route: Route) -> list[Decimal]:
+def route_node_amounts(route: Route) -> list[Decimal]:
+    """Balance at each node of the route, using the router's hop recurrence."""
     if not route.hops:
         return [route.source_amount]
 
@@ -88,11 +90,13 @@ def _node_amounts(route: Route) -> list[Decimal]:
     return amounts
 
 
-def _format_amount(amount: Decimal) -> str:
+def format_amount(amount: Decimal) -> str:
+    """Render a monetary amount with two decimal places."""
     return f"{amount.quantize(Decimal('0.01')):.2f}"
 
 
-def _format_hours(hours: Decimal) -> str:
+def format_hours(hours: Decimal) -> str:
+    """Render hours trimmed to at most three decimals, always with a decimal point."""
     normalized = format(hours.quantize(Decimal("0.001")).normalize(), "f")
     if "." not in normalized:
         return f"{normalized}.0"

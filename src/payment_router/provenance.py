@@ -31,12 +31,25 @@ PROVENANCE_RECORDS = (
     ProvenanceRecord(
         evidence_id="fx-frozen-table",
         network="Shared FX",
-        metric="USD normalization rates",
+        metric="USD normalization rates (default source)",
         classification=DataSource.ESTIMATED,
         value="USD 1.00; EUR 1.08; GBP 1.27; CNY 0.14",
         checked_on="2026-04-19",
         reference=None,
         caveat="Frozen teaching values for reproducibility, not current market pricing.",
+    ),
+    ProvenanceRecord(
+        evidence_id="fx-live-ecb",
+        network="Shared FX",
+        metric="USD normalization rates (--fx live)",
+        classification=DataSource.VERIFIED,
+        value="ECB euro reference rates per fetched snapshot",
+        checked_on="2026-07-20",
+        reference="https://www.frankfurter.dev/",
+        caveat=(
+            "ECB reference rates are indicative daily fixings published once "
+            "per business day, not tradable quotes; snapshots may lag."
+        ),
     ),
     ProvenanceRecord(
         evidence_id="sepa-sct-time",

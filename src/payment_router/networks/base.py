@@ -19,3 +19,12 @@ class PaymentNetwork(ABC):
     @abstractmethod
     def supported_currencies(self) -> set[str]:
         """Return the currencies this network can handle."""
+
+    def display_name(self) -> str:
+        """Human-readable network name used in warnings, tables, and the API."""
+        explicit_name = getattr(self, "_name", None)
+        if explicit_name:
+            return str(explicit_name)
+
+        class_name = type(self).__name__
+        return class_name.removesuffix("Network") or class_name

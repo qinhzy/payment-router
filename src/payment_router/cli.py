@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-from decimal import Decimal, InvalidOperation
+import os
+from decimal import Decimal
+from enum import StrEnum
 from importlib.metadata import version as distribution_version
 from typing import Annotated
 
@@ -12,7 +14,8 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
-from payment_router.core.graph import PaymentGraph
+from payment_router import service
+from payment_router.core import fx
 from payment_router.decision import (
     DecisionProfile,
     RouteDecision,
@@ -20,12 +23,10 @@ from payment_router.decision import (
     summarize_tradeoff,
 )
 from payment_router.networks.base import PaymentNetwork
-from payment_router.networks.sepa import SEPANetwork
-from payment_router.networks.swift import SWIFTNetwork
-from payment_router.networks.wise import WiseNetwork
 from payment_router.provenance import PROVENANCE_RECORDS
-from payment_router.router import PaymentRouter, RoutingPreference
-from payment_router.visualizer import route_to_mermaid, routes_to_comparison_table
+from payment_router.router import PaymentRouter
+from payment_router.service import BuildWarning, RoutingRequestError
+from payment_router.visualizer import format_hours, route_to_mermaid, routes_to_comparison_table
 
 app = typer.Typer(
     help="Teaching-oriented CLI simulator for cross-border payment routing.",
@@ -35,6 +36,38 @@ app = typer.Typer(
 )
 console = Console()
 error_console = Console(stderr=True)
+
+
+class FxMode(StrEnum):
+    FROZEN = "frozen"
+    LIVE = "live"
+
+
+_FX_OPTION = typer.Option(
+    "--fx",
+    help="FX rate source: 'frozen' teaching table (default) or 'live' ECB reference rates.",
+    case_sensitive=False,
+)
+
+
+def _activate_fx(fx_mode: FxMode | None) -> None:
+    requested = (
+        fx_mode.value
+        if fx_mode is not None
+        else os.environ.get(fx.FX_MODE_ENV_VAR, "frozen").strip().lower()
+    )
+    if requested not in {"frozen", "live"}:
+        _print_error(f"Unknown FX mode: {requested}. Use 'frozen' or 'live'.")
+        raise typer.Exit(code=1)
+
+    status = fx.activate(requested)
+    if status.fallback:
+        console.print(Panel(status.detail, title="FX fallback", border_style="yellow"))
+    elif status.mode == "live":
+        line = f"FX: {status.label} · {status.rate_date} ({status.classification.value})"
+        if status.stale:
+            line += " · cached snapshot (refresh failed)"
+        console.print(line, style="dim")
 
 
 def _read_version() -> str:
@@ -80,27 +113,24 @@ def route_command(
         int,
         typer.Option("--top-n", min=1, help="Number of candidate routes to display."),
     ] = 1,
+    fx_mode: Annotated[FxMode | None, _FX_OPTION] = None,
 ) -> None:
+    _activate_fx(fx_mode)
     source_currency, target_currency, parsed_amount, router = _prepare_router(
         from_currency,
         to_currency,
         amount,
     )
-    preference = _preference_from_name(prefer)
-
     if top_n == 1:
-        route = _select_single_route(
+        route = service.select_route_for_profile(
             router,
             source_currency,
             target_currency,
             parsed_amount,
             prefer,
-            preference,
         )
         if route is None:
-            _print_error(
-                f"No route found from {source_currency} to {target_currency} for {parsed_amount}."
-            )
+            _print_error(service.no_route_message(source_currency, target_currency, parsed_amount))
             raise typer.Exit(code=1)
         _render_route(route)
         return
@@ -109,13 +139,11 @@ def route_command(
         source_currency,
         target_currency,
         parsed_amount,
-        preference,
+        service.preference_for_profile(prefer),
         top_n=top_n,
     )
     if not routes:
-        _print_error(
-            f"No route found from {source_currency} to {target_currency} for {parsed_amount}."
-        )
+        _print_error(service.no_route_message(source_currency, target_currency, parsed_amount))
         raise typer.Exit(code=1)
 
     _render_route_comparison(routes, prefer)
@@ -130,8 +158,10 @@ def decide_command(
         bool,
         typer.Option("--show-diagrams", help="Render Mermaid diagrams for unique recommendations."),
     ] = False,
+    fx_mode: Annotated[FxMode | None, _FX_OPTION] = None,
 ) -> None:
     """Compare cheapest, fastest, and balanced recommendations in one decision board."""
+    _activate_fx(fx_mode)
     source_currency, target_currency, parsed_amount, router = _prepare_router(
         from_currency,
         to_currency,
@@ -144,9 +174,7 @@ def decide_command(
         parsed_amount,
     )
     if not decisions:
-        _print_error(
-            f"No route found from {source_currency} to {target_currency} for {parsed_amount}."
-        )
+        _print_error(service.no_route_message(source_currency, target_currency, parsed_amount))
         raise typer.Exit(code=1)
     _render_decision_board(decisions, parsed_amount, show_diagrams=show_diagrams)
 
@@ -189,15 +217,42 @@ def sources_command() -> None:
     )
 
 
+@app.command("serve")
+def serve_command(
+    host: Annotated[str, typer.Option("--host", help="Interface to bind.")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", min=1, max=65535, help="Port to bind.")] = 8000,
+    open_browser: Annotated[
+        bool,
+        typer.Option("--open/--no-open", help="Open the console in a browser after starting."),
+    ] = False,
+    fx_mode: Annotated[FxMode | None, _FX_OPTION] = None,
+) -> None:
+    """Launch the local web console (requires the 'web' extra)."""
+    _activate_fx(fx_mode)
+    try:
+        import uvicorn
+
+        from payment_router.web.app import create_app
+    except ModuleNotFoundError:
+        _print_error(
+            "The web console requires the optional 'web' dependencies. "
+            "Install them with: uv sync --extra web "
+            "(or: pip install 'payment-router[web]')."
+        )
+        raise typer.Exit(code=1) from None
+
+    url = f"http://{host}:{port}"
+    console.print(f"Serving the payment-router console at {url}")
+    if open_browser:
+        import threading
+        import webbrowser
+
+        threading.Timer(1.0, webbrowser.open, args=[url]).start()
+    uvicorn.run(create_app(), host=host, port=port, log_level="info")
+
+
 def _instantiate_networks() -> list[PaymentNetwork]:
-    return [WiseNetwork(), SEPANetwork(), SEPANetwork(instant=True), SWIFTNetwork()]
-
-
-def _supported_currencies(networks: list[PaymentNetwork]) -> set[str]:
-    supported: set[str] = set()
-    for network in networks:
-        supported.update(currency.strip().upper() for currency in network.supported_currencies())
-    return supported
+    return service.default_networks()
 
 
 def _prepare_router(
@@ -205,70 +260,22 @@ def _prepare_router(
     to_currency: str,
     amount: str,
 ) -> tuple[str, str, Decimal, PaymentRouter]:
-    source_currency = from_currency.strip().upper()
-    target_currency = to_currency.strip().upper()
-    parsed_amount = _parse_amount(amount)
-    if parsed_amount is None:
-        _print_error("Amount must be a valid decimal number.")
-        raise typer.Exit(code=1)
-    if parsed_amount <= 0:
-        _print_error("Amount must be greater than zero.")
-        raise typer.Exit(code=1)
-
-    networks = _instantiate_networks()
-    supported = _supported_currencies(networks)
-    unsupported = [
-        currency for currency in (source_currency, target_currency) if currency not in supported
-    ]
-    if unsupported:
-        supported_list = ", ".join(sorted(supported))
-        _print_error(
-            "Unsupported currency code(s): "
-            f"{', '.join(unsupported)}. Supported currencies: {supported_list}."
-        )
-        raise typer.Exit(code=1)
-
-    graph = PaymentGraph(
-        networks=networks,
-        currencies=sorted(supported),
-        amount=parsed_amount,
-        amount_currency=source_currency,
-    )
-    asyncio.run(graph.build())
-    if graph.build_errors:
-        _print_build_warnings(list(graph.build_errors))
-    return source_currency, target_currency, parsed_amount, PaymentRouter(graph)
-
-
-def _parse_amount(raw_amount: str) -> Decimal | None:
     try:
-        amount = Decimal(raw_amount)
-    except InvalidOperation:
-        return None
-    return amount if amount.is_finite() else None
+        session = asyncio.run(
+            service.build_session(
+                from_currency,
+                to_currency,
+                amount,
+                networks=_instantiate_networks(),
+            )
+        )
+    except RoutingRequestError as error:
+        _print_error(str(error))
+        raise typer.Exit(code=1) from None
 
-
-def _preference_from_name(prefer: DecisionProfile) -> RoutingPreference:
-    if prefer is DecisionProfile.CHEAPEST:
-        return RoutingPreference(cost_weight=1.0, time_weight=0.0)
-    if prefer is DecisionProfile.FASTEST:
-        return RoutingPreference(cost_weight=0.0, time_weight=1.0)
-    return RoutingPreference(cost_weight=0.5, time_weight=0.5)
-
-
-def _select_single_route(
-    router: PaymentRouter,
-    source_currency: str,
-    target_currency: str,
-    amount: Decimal,
-    prefer: DecisionProfile,
-    preference: RoutingPreference,
-):
-    if prefer is DecisionProfile.CHEAPEST:
-        return router.find_cheapest(source_currency, target_currency, amount)
-    if prefer is DecisionProfile.FASTEST:
-        return router.find_fastest(source_currency, target_currency, amount)
-    return router.find_route(source_currency, target_currency, amount, preference)
+    if session.warnings:
+        _print_build_warnings(session.warnings)
+    return session.source_currency, session.target_currency, session.amount, session.router
 
 
 def _render_route(route) -> None:
@@ -281,7 +288,7 @@ def _render_route(route) -> None:
         style=_fee_style(route.total_fee_usd),
     )
     summary.append("Total time: ", style="white")
-    summary.append(f"{_format_hours(route.total_time_hours)} hours\n", style="bright_blue")
+    summary.append(f"{format_hours(route.total_time_hours)} hours\n", style="bright_blue")
     summary.append("Final amount: ", style="white")
     summary.append(
         f"{route.final_amount.quantize(Decimal('0.01')):.2f} {route.target_currency}",
@@ -302,7 +309,7 @@ def _render_route(route) -> None:
                 hop.network_name,
                 f"{hop.currency_in}->{hop.currency_out}",
                 f"${hop.fee_usd.quantize(Decimal('0.01')):.2f}",
-                _format_hours(hop.time_hours),
+                format_hours(hop.time_hours),
             )
         console.print(hop_table)
 
@@ -367,7 +374,7 @@ def _render_decision_board(
             profile,
             " → ".join(decision.path),
             f"${route.total_fee_usd.quantize(Decimal('0.01')):.2f}",
-            f"{_format_hours(route.total_time_hours)}h",
+            f"{format_hours(route.total_time_hours)}h",
             f"{route.final_amount.quantize(Decimal('0.01')):.2f} {route.target_currency}",
             decision.evidence,
             style="bold" if decision.profile is DecisionProfile.BALANCED else None,
@@ -404,37 +411,27 @@ def _render_decision_board(
 
 
 def _network_display_name(network: PaymentNetwork) -> str:
-    explicit_name = getattr(network, "_name", None)
-    if explicit_name:
-        return str(explicit_name)
-
-    class_name = type(network).__name__
-    return class_name.removesuffix("Network") or class_name
+    return service.network_display_name(network)
 
 
 def _print_error(message: str) -> None:
     error_console.print(Panel(message, title="Error", border_style="red"))
 
 
-def _print_build_warnings(build_errors: list[tuple[str, str, str, Exception]]) -> None:
+def _print_build_warnings(build_warnings: tuple[BuildWarning, ...]) -> None:
     warning_table = Table(title="Provider Warnings", header_style="bold yellow")
     warning_table.add_column("Network")
     warning_table.add_column("Pair")
     warning_table.add_column("Reason")
 
-    for network_name, from_currency, to_currency, exception in build_errors:
-        warning_table.add_row(network_name, f"{from_currency}->{to_currency}", str(exception))
+    for warning in build_warnings:
+        warning_table.add_row(
+            warning.network,
+            f"{warning.from_currency}->{warning.to_currency}",
+            warning.reason,
+        )
 
     console.print(warning_table)
-
-
-def _format_hours(hours: Decimal) -> str:
-    normalized = format(hours.quantize(Decimal("0.001")).normalize(), "f")
-    if "." not in normalized:
-        return f"{normalized}.0"
-
-    trimmed = normalized.rstrip("0").rstrip(".")
-    return trimmed if "." in trimmed else f"{trimmed}.0"
 
 
 def _fee_style(fee_usd: Decimal) -> str:

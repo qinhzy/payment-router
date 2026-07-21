@@ -39,8 +39,11 @@ score(e) = alpha * cost(e) / max_cost + beta * time(e) / max_time
 
 `alpha` and `beta` are normalized from the requested preference. `cost(e)` is
 the USD-normalized fee plus the non-negative loss implied by the edge rate
-relative to the frozen mid-rate table. The scoring inputs retain their own data
-classifications; normalization does not turn an estimate into verified data.
+relative to the active FX source's mid-rate table — the frozen teaching table
+by default, or a cached ECB reference-rate snapshot under `--fx live`. The
+scoring inputs retain their own data classifications; normalization does not
+turn an estimate into verified data, and fee labels inherit the FX source's
+class when a conversion participates.
 
 ## Route algorithms
 
@@ -69,6 +72,35 @@ next_amount = (current_amount - fee_in_source_currency) * quoted_fx_rate
 A path is rejected when the current balance cannot strictly cover its fee. The
 visualizer uses the same recurrence, so intermediate diagram balances match the
 router rather than a cumulative-fee approximation.
+
+## Frontends
+
+The CLI and the web console are thin rendering layers over one shared service
+module (`service.py`). It owns request validation, network instantiation,
+graph construction, and profile-to-preference mapping, so both frontends
+always agree on routing behavior and error messages.
+
+- `cli.py` renders Rich tables, panels, and Mermaid source in the terminal.
+- `web/app.py` is a FastAPI application (optional `web` extra) exposing
+  `/api/meta`, `/api/route`, `/api/decide`, and `/api/sources`, and serving the
+  static single-page console from `web/static/`. JSON amounts reuse the exact
+  CLI formatting helpers, so both frontends display identical numbers.
+- The web app keeps a short-lived cache of built routing sessions (default
+  60 seconds, keyed by source, target, and amount) so switching preference or
+  top-N reuses the same quotes instead of re-querying live providers. Only
+  successful builds are cached, responses expose `quoted_at`/`from_cache`
+  metadata, and a TTL of zero disables the cache. The CLI always builds fresh.
+
+- `web/ai.py` is the optional AI layer: when Anthropic credentials resolve,
+  `POST /api/explain` streams a Claude-generated reading of the displayed
+  result over server-sent events. The prompt grounds the model strictly in
+  the console's JSON, surfaces provenance caveats, and pins the simulator
+  disclaimer; without credentials the endpoint returns 503 and the console
+  hides the panel.
+
+The web console is a local tool started with `remit serve`; it is not a
+deployment target and adds no authentication, persistence, or payment
+initiation surface.
 
 ## Invariants
 

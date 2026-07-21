@@ -8,6 +8,7 @@ import httpx
 import pytest
 from pytest_httpx import HTTPXMock
 
+from payment_router.core import fx
 from payment_router.core.models import DataSource
 from payment_router.networks.wise import QUOTE_URL, WiseAPIError, WiseNetwork
 
@@ -326,3 +327,36 @@ async def test_get_quote_wraps_timeouts(httpx_mock: HTTPXMock) -> None:
 
     with pytest.raises(WiseAPIError, match="timed out"):
         await network.get_quote(Decimal("1000"), "GBP", "CNY")
+
+
+async def test_fee_classification_follows_live_fx_source(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(
+        method="POST",
+        url=QUOTE_URL,
+        json=deepcopy(LIVE_WISE_GBP_CNY_RESPONSE),
+    )
+    fx.configure(
+        fx.RateSource(
+            mode="live",
+            label="test live rates",
+            classification=DataSource.VERIFIED,
+            usd_rates={
+                "USD": Decimal("1.0"),
+                "EUR": Decimal("1.07"),
+                "GBP": Decimal("1.25"),
+                "CNY": Decimal("0.139"),
+            },
+            rate_date="2026-07-17",
+        )
+    )
+    try:
+        quote = await WiseNetwork().get_quote(Decimal("1000"), "GBP", "CNY")
+    finally:
+        fx.activate("frozen")
+
+    assert quote is not None
+    assert quote.fee_usd == Decimal("11.25") * Decimal("1.25")
+    assert quote.data_source is DataSource.VERIFIED
+    assert quote.fee_data_source is DataSource.VERIFIED
+    assert quote.time_data_source is DataSource.VERIFIED
+    assert quote.fx_data_source is DataSource.VERIFIED
