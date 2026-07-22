@@ -33,6 +33,20 @@ def _stub_networks() -> list[PaymentNetwork]:
                 ("USD", "CNY"): make_quote("SWIFT", "20", "30", "6.8"),
             },
         ),
+        FakeNetwork(
+            "CIPS",
+            {"USD", "EUR", "GBP", "CNY", "HKD", "SGD"},
+            {
+                ("HKD", "CNY"): make_quote(
+                    "CIPS",
+                    "18.56",
+                    "12",
+                    "0.91",
+                    time_min_hours="2",
+                    time_max_hours="24",
+                ),
+            },
+        ),
     ]
 
 
@@ -45,8 +59,13 @@ def test_meta_reports_currencies_networks_and_profiles() -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["currencies"] == ["CNY", "EUR", "USD"]
-    assert [network["name"] for network in payload["networks"]] == ["Wise", "SEPA", "SWIFT"]
+    assert payload["currencies"] == ["CNY", "EUR", "GBP", "HKD", "SGD", "USD"]
+    assert [network["name"] for network in payload["networks"]] == [
+        "Wise",
+        "SEPA",
+        "SWIFT",
+        "CIPS",
+    ]
     assert payload["profiles"] == ["cheapest", "fastest", "balanced"]
     assert payload["version"]
     assert "simulator" in payload["disclaimer"]
@@ -99,6 +118,21 @@ def test_route_same_currency_uses_self_loop_rail() -> None:
     route = response.json()["routes"][0]
     assert route["path"] == ["EUR", "EUR"]
     assert route["hops"][0]["network"] == "SEPA"
+
+
+def test_route_supports_hkd_to_cny_cips_corridor_with_timing_bounds() -> None:
+    response = _client().get(
+        "/api/route",
+        params={"source": "HKD", "target": "CNY", "amount": "10000"},
+    )
+
+    assert response.status_code == 200
+    route = response.json()["routes"][0]
+    assert route["path"] == ["HKD", "CNY"]
+    assert route["hops"][0]["network"] == "CIPS"
+    assert route["total_time_hours"] == "12.0"
+    assert route["total_time_min_hours"] == "2.0"
+    assert route["total_time_max_hours"] == "24.0"
 
 
 def test_route_rejects_unsupported_currency() -> None:
@@ -189,6 +223,8 @@ def test_sources_returns_provenance_registry() -> None:
     evidence_ids = {record["evidence_id"] for record in records}
     assert "wise-live-quote" in evidence_ids
     assert "swift-model-parameters" in evidence_ids
+    assert "cips-topology" in evidence_ids
+    assert "cips-model-parameters" in evidence_ids
     classifications = {record["classification"] for record in records}
     assert {"VERIFIED", "ESTIMATED"} <= classifications
 
@@ -296,6 +332,21 @@ def test_sensitivity_returns_regions_and_stability() -> None:
     assert "total_time_max_hours" in route
     assert payload["balanced_region"] is not None
     assert isinstance(payload["caveats"], list)
+
+
+def test_sensitivity_discovers_cips_for_hkd_to_cny() -> None:
+    response = _client().get(
+        "/api/sensitivity",
+        params={"source": "HKD", "target": "CNY", "amount": "10000", "steps": 20},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["regions"]) == 1
+    route = payload["regions"][0]["route"]
+    assert [hop["network"] for hop in route["hops"]] == ["CIPS"]
+    assert route["total_time_min_hours"] == "2.0"
+    assert route["total_time_max_hours"] == "24.0"
 
 
 def test_sensitivity_returns_404_when_no_route_exists() -> None:

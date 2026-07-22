@@ -7,9 +7,10 @@
 Explainable, multi-objective routing simulator for cross-border payments.
 
 Given a source currency, target currency, amount, and cost/time preference, the
-simulator builds a payment graph across Wise quotes, SEPA transfers, and an
-explicit SWIFT correspondent-banking scenario. It then compares direct and
-multi-hop routes without hiding where the numbers came from.
+simulator builds a payment graph across Wise quotes, SEPA transfers, an
+explicit SWIFT correspondent-banking scenario, and a CNY-bound CIPS scenario.
+It then compares direct and multi-hop routes without hiding where the numbers
+came from.
 
 > [!IMPORTANT]
 > This is an early-stage teaching and research project, not a production quote,
@@ -37,6 +38,7 @@ uv run remit route USD CNY 1000 --prefer=cheapest
 uv run remit route USD CNY 1000 --top-n=3
 uv run remit decide USD CNY 1000
 uv run remit sensitivity USD CNY 1000
+uv run remit route HKD CNY 10000 --top-n=3
 uv run remit route EUR EUR 1000 --top-n=3
 uv run remit sources
 uv run remit serve
@@ -104,16 +106,22 @@ target: it adds no authentication, persistence, or payment initiation surface.
   maximum and an explicitly estimated sender fee.
 - **SWIFT scenario:** configurable correspondent-hop simulation. The topology
   is source-backed; all numeric hop parameters are labelled `ESTIMATED`.
+- **CIPS scenario:** CNY-destination teaching model with a deliberately shorter
+  default chain than SWIFT. Its cross-border RMB role, direct/indirect
+  participant structure, and 5×24+4 operating window are source-backed; every
+  numeric parameter remains `ESTIMATED`.
 - **FX sources:** a frozen teaching table by default; `--fx live` switches to
   ECB euro reference rates via Frankfurter with an on-disk snapshot cache and
   explicit stale/fallback behavior.
+- **Supported currencies:** USD, EUR, GBP, CNY, HKD, and SGD. SEPA remains
+  EUR-only, while CIPS is limited to CNY-target corridors.
 - **Routing:** normalized cost/time Dijkstra selection plus edge-expanded top-N
   enumeration that preserves parallel payment networks.
 - **Timing ranges and sensitivity:** every hop carries a `[min, max]` time
-  window (SEPA scheme-maximum semantics, a registered SWIFT scenario band),
-  routes aggregate them into displayed ranges, and `remit sensitivity` sweeps
-  the cost/time weight to show where the winning route flips and how stable
-  the balanced choice is.
+  window (SEPA scheme-maximum semantics plus registered SWIFT and CIPS
+  scenario bands), routes aggregate them into displayed ranges, and
+  `remit sensitivity` sweeps the cost/time weight to show where the winning
+  route flips and how stable the balanced choice is.
 - **Resilience:** bounded concurrent quote collection, deterministic warnings,
   invalid-response isolation, and fallback to the next fundable route.
 - **Explanations:** terminal decision board, Markdown comparisons, and Mermaid
@@ -121,7 +129,7 @@ target: it adds no authentication, persistence, or payment initiation surface.
 - **Web console:** optional FastAPI backend plus a dependency-free single-page
   frontend sharing the CLI's routing service layer (`remit serve`).
 - **Quality:** Python 3.11-3.13 CI, strict pytest configuration, expanded Ruff
-  rules, package-build validation, and 155 automated tests.
+  rules, package-build validation, and 180 automated tests.
 
 ## Quick start
 
@@ -143,6 +151,7 @@ uv run pytest -x
 uv run ruff check .
 uv run ruff format --check .
 uv build
+uv lock --check
 ```
 
 ## Provenance model
@@ -168,7 +177,7 @@ available in the CLI with `remit sources`.
 
 ```text
 src/payment_router/
-|-- networks/          # Wise, SEPA, and SWIFT adapters/models
+|-- networks/          # Wise, SEPA, SWIFT, and CIPS adapters/models
 |-- core/
 |   |-- models.py      # quote, hop, route, and metric provenance models
 |   |-- fx.py          # pluggable FX sources (frozen table / live ECB)
@@ -190,7 +199,7 @@ The detailed algorithm, invariants, and boundaries are documented in
 
 ## Known limitations
 
-- Only `USD`, `EUR`, `GBP`, and `CNY` are supported.
+- Only `USD`, `EUR`, `GBP`, `CNY`, `HKD`, and `SGD` are supported.
 - The default frozen FX mid-rates make runs reproducible but not
   market-current; `--fx live` uses ECB reference rates, which are daily
   indicative fixings rather than tradable quotes.
@@ -198,7 +207,10 @@ The detailed algorithm, invariants, and boundaries are documented in
   live quotes can differ because the actual arriving amount is path-dependent.
 - Wise delivery estimates for an already funded balance can understate the time
   of later hops in a simulated multi-hop route.
-- SEPA and SWIFT fees are scenario assumptions, not bank tariffs.
+- SEPA, SWIFT, and CIPS fees are scenario assumptions, not bank tariffs.
+- CIPS is modelled only for CNY-target corridors. Its two-hop default is a
+  teaching abstraction, and the published operating window is not an
+  end-to-end delivery promise.
 - Geography, bank participation, compliance, holidays, cut-off times, and
   liquidity are outside the MVP model.
 
@@ -208,8 +220,9 @@ The detailed algorithm, invariants, and boundaries are documented in
 - **v0.4:** pluggable ECB/Frankfurter FX provider with cached, reproducible
   snapshots and explicit fallback behavior (shipped).
 - **v0.5:** independent multi-hop timing model and sensitivity analysis
+  (shipped).
+- **v0.6:** source-backed corridor expansion and an RMB-focused CIPS scenario
   (this release).
-- **v0.6:** source-backed corridor expansion and an RMB-focused CIPS scenario.
 - **v0.7:** historical comparison without turning the simulator into an online
   payment service.
 

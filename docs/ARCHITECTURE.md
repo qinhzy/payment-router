@@ -2,9 +2,9 @@
 
 ## Goal and boundary
 
-`payment-router` is a bounded teaching simulator for four currencies and three
-payment-system models. It explains route trade-offs; it does not execute money
-movement, determine legal availability, or promise a quote.
+`payment-router` is a bounded teaching simulator for six currencies and four
+payment-system families. It explains route trade-offs; it does not execute
+money movement, determine legal availability, or promise a quote.
 
 ## Data flow
 
@@ -57,8 +57,26 @@ class when a conversion participates.
 - `max_hops` counts payment edges, not expanded implementation nodes.
 - Same-currency lookup ranks the explicit self-loop edges directly.
 
-The four-currency MVP bounds graph size. A future broad-currency version will
+The six-currency scope bounds graph size. A future broad-currency version will
 need additional candidate limits and performance benchmarks.
+
+## Scenario-network boundaries
+
+SWIFT and CIPS are intentionally comparative scenarios, not provider adapters.
+The SWIFT model can produce an edge for every supported pair and represents a
+configurable correspondent-bank chain. The CIPS model produces edges only when
+the target is CNY; its default two-hop path compresses the source-side on-ramp
+and participant path into a teaching abstraction. It does not assert that the
+originating institution is a CIPS participant or that a particular corridor is
+legally or operationally available.
+
+CIPS's role in cross-border RMB clearing, its direct/indirect participant
+structure, and its 5×24+4-hour operating window are `VERIFIED`. Its hop count,
+fee formula, expected delay, `[min, max]` timing band, and FX spread are all
+`ESTIMATED`. In particular, a system operating window is not evidence of an
+end-to-end arrival time. Defaults are deliberately shorter and faster than the
+SWIFT scenario so students can inspect the trade-off without treating either
+scenario as a bank quote.
 
 ## Timing model and sensitivity
 
@@ -71,6 +89,8 @@ better to claim, and model validation enforces `min <= expected <= max`:
   (`min = 0`);
 - the SWIFT scenario carries a per-hop 6-48 hour band registered as
   `ESTIMATED` in the provenance registry;
+- the CIPS scenario carries a per-hop 1-12 hour band, also registered as
+  `ESTIMATED`; its published operating schedule does not upgrade this band;
 - Wise live delivery estimates remain point values until a source-backed
   band exists.
 

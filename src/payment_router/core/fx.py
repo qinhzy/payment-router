@@ -38,6 +38,8 @@ _FROZEN_RATES_TO_USD: dict[str, Decimal] = {
     "EUR": Decimal("1.08"),
     "GBP": Decimal("1.27"),
     "CNY": Decimal("0.14"),
+    "HKD": Decimal("0.128"),
+    "SGD": Decimal("0.74"),
 }
 _SUPPORTED_CURRENCIES = frozenset(_FROZEN_RATES_TO_USD)
 

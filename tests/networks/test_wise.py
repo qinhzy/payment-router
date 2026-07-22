@@ -288,6 +288,10 @@ async def test_get_quote_returns_none_for_unsupported_corridor(
     assert not httpx_mock.get_requests()
 
 
+def test_supported_currencies_include_hkd_and_sgd() -> None:
+    assert {"HKD", "SGD"} <= WiseNetwork().supported_currencies()
+
+
 async def test_get_quote_raises_on_server_error(httpx_mock: HTTPXMock) -> None:
     httpx_mock.add_response(
         method="POST",
@@ -345,6 +349,8 @@ async def test_fee_classification_follows_live_fx_source(httpx_mock: HTTPXMock) 
                 "EUR": Decimal("1.07"),
                 "GBP": Decimal("1.25"),
                 "CNY": Decimal("0.139"),
+                "HKD": Decimal("0.128"),
+                "SGD": Decimal("0.74"),
             },
             rate_date="2026-07-17",
         )

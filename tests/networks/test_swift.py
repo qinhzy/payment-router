@@ -95,10 +95,10 @@ async def test_large_amount_is_percentage_fee_dominated() -> None:
     assert quote.fee_usd - Decimal("60") > Decimal("60")
 
 
-def test_supported_currencies_returns_mvp_currency_set() -> None:
+def test_supported_currencies_returns_expanded_currency_set() -> None:
     network = SWIFTNetwork()
 
-    assert network.supported_currencies() == {"USD", "EUR", "GBP", "CNY"}
+    assert network.supported_currencies() == {"USD", "EUR", "GBP", "CNY", "HKD", "SGD"}
 
 
 @pytest.mark.parametrize(

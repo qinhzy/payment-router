@@ -8,6 +8,7 @@ from helpers import FakeNetwork, make_quote
 
 from payment_router.decision import DecisionProfile
 from payment_router.networks.base import PaymentNetwork
+from payment_router.networks.cips import CIPSNetwork
 from payment_router.service import (
     RoutingRequestError,
     build_session,
@@ -93,3 +94,21 @@ def test_build_session_normalizes_request_and_collects_warnings() -> None:
     )
     assert route is not None
     assert [hop.network_name for hop in route.hops] == ["Demo"]
+
+
+def test_build_session_routes_hkd_to_cny_over_cips() -> None:
+    session = asyncio.run(build_session("HKD", "CNY", "10000", networks=[CIPSNetwork()]))
+
+    route = select_route_for_profile(
+        session.router,
+        session.source_currency,
+        session.target_currency,
+        session.amount,
+        DecisionProfile.BALANCED,
+    )
+
+    assert route is not None
+    assert [hop.network_name for hop in route.hops] == ["CIPS"]
+    assert route.total_time_hours == Decimal("12.0")
+    assert route.total_time_min_hours == Decimal("2.0")
+    assert route.total_time_max_hours == Decimal("24.0")
