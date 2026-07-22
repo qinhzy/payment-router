@@ -17,7 +17,14 @@
   const resultsBox = $("#results");
   const sourcesBox = $("#sources");
 
-  const CURRENCY_SYMBOLS = { USD: "$", EUR: "€", GBP: "£", CNY: "¥" };
+  const CURRENCY_SYMBOLS = {
+    USD: "$",
+    EUR: "€",
+    GBP: "£",
+    CNY: "¥",
+    HKD: "HK$",
+    SGD: "S$",
+  };
   const PROVENANCE_LABELS = {
     VERIFIED: "Verified",
     INDUSTRY_AVERAGE: "Industry average",

@@ -3,6 +3,29 @@
 All notable user-visible changes are recorded here. The project follows
 [Semantic Versioning](https://semver.org/) while it approaches a stable API.
 
+## [0.6.0] - Unreleased
+
+### Added
+
+- a configurable CIPS teaching scenario for CNY-destination corridors. CIPS's
+  cross-border RMB role, direct/indirect participant structure, and 5×24+4
+  operating window are source-backed; hop count, fees, timing range, and FX
+  spread remain explicitly `ESTIMATED`;
+- HKD and SGD across the frozen teaching FX table, Wise live quote candidates,
+  the SWIFT scenario, CLI, API, and local console;
+- deterministic CIPS unit, routing, CLI, Web API, timing-bound, and parameter
+  validation coverage;
+- `cips-topology` and `cips-model-parameters` evidence records, with matching
+  machine-readable and human-readable registry entries.
+
+### Changed
+
+- the shared default network factory now registers CIPS once so the CLI, Web
+  API, console, decision board, and sensitivity view discover it without
+  frontend network lists;
+- the Frankfurter request derives HKD and SGD from the expanded supported
+  currency set; no provider-specific branch or new runtime dependency is used.
+
 ## [0.5.0] - Unreleased
 
 ### Added

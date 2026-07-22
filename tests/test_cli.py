@@ -14,7 +14,7 @@ def _stub_networks() -> list[PaymentNetwork]:
     return [
         FakeNetwork(
             "Wise",
-            {"USD", "EUR", "GBP", "CNY"},
+            {"USD", "EUR", "GBP", "CNY", "HKD", "SGD"},
             {
                 ("USD", "CNY"): make_quote("Wise", "5", "1", "7.0", DataSource.VERIFIED),
                 ("USD", "EUR"): make_quote("Wise EUR", "2", "1", "0.8", DataSource.VERIFIED),
@@ -29,11 +29,25 @@ def _stub_networks() -> list[PaymentNetwork]:
         ),
         FakeNetwork(
             "SWIFT",
-            {"USD", "GBP", "CNY"},
+            {"USD", "GBP", "CNY", "HKD", "SGD"},
             {
                 ("USD", "CNY"): make_quote("SWIFT", "20", "30", "6.8"),
                 ("USD", "GBP"): make_quote("SWIFT GBP", "4", "2", "0.7"),
                 ("GBP", "CNY"): make_quote("SWIFT CNY", "4", "2", "10.0"),
+            },
+        ),
+        FakeNetwork(
+            "CIPS",
+            {"USD", "EUR", "GBP", "CNY", "HKD", "SGD"},
+            {
+                ("HKD", "CNY"): make_quote(
+                    "CIPS",
+                    "18.56",
+                    "12",
+                    "0.91",
+                    time_min_hours="2",
+                    time_max_hours="24",
+                ),
             },
         ),
     ]
@@ -103,19 +117,20 @@ def test_networks_command_lists_available_networks(monkeypatch) -> None:
     assert "Wise" in result.output
     assert "SEPA" in result.output
     assert "SWIFT" in result.output
+    assert "CIPS" in result.output
 
 
 def test_default_networks_include_standard_and_instant_sepa() -> None:
     names = [_network_display_name(network) for network in _instantiate_networks()]
 
-    assert names == ["Wise", "SEPA", "SEPA Instant", "SWIFT"]
+    assert names == ["Wise", "SEPA", "SEPA Instant", "SWIFT", "CIPS"]
 
 
 def test_version_option_prints_project_version() -> None:
     result = runner.invoke(app, ["--version"])
 
     assert result.exit_code == 0
-    assert "0.5.0" in result.output
+    assert "0.6.0" in result.output
 
 
 def test_sources_command_lists_verified_and_estimated_evidence() -> None:
@@ -125,6 +140,8 @@ def test_sources_command_lists_verified_and_estimated_evidence() -> None:
     assert "Data Provenance Registry" in result.output
     assert "wise-live-quote" in result.output
     assert "swift-model-parameters" in result.output
+    assert "cips-topology" in result.output
+    assert "cips-model-parameters" in result.output
     assert "VERIFIED" in result.output
     assert "ESTIMATED" in result.output
 
@@ -147,3 +164,13 @@ def test_sensitivity_command_outputs_sweep_and_stability(monkeypatch) -> None:
     assert "Preference sweep" in result.output
     assert "Stability" in result.output
     assert "0.00" in result.output
+
+
+def test_route_command_supports_hkd_to_cny_cips_corridor(monkeypatch) -> None:
+    monkeypatch.setattr("payment_router.cli._instantiate_networks", _stub_networks)
+
+    result = runner.invoke(app, ["route", "HKD", "CNY", "10000"])
+
+    assert result.exit_code == 0
+    assert "CIPS" in result.output
+    assert "Time range" in result.output
