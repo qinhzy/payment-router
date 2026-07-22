@@ -19,11 +19,16 @@ def make_quote(
     time_hours: str,
     fx_rate: str = "1.0",
     data_source: DataSource = DataSource.INDUSTRY_AVERAGE,
+    *,
+    time_min_hours: str | None = None,
+    time_max_hours: str | None = None,
 ) -> NetworkQuote:
     return NetworkQuote(
         network_name=network_name,
         fee_usd=Decimal(fee_usd),
         time_hours=Decimal(time_hours),
+        time_min_hours=Decimal(time_min_hours) if time_min_hours is not None else None,
+        time_max_hours=Decimal(time_max_hours) if time_max_hours is not None else None,
         fx_rate=Decimal(fx_rate),
         data_source=data_source,
     )

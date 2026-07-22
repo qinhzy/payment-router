@@ -14,7 +14,7 @@ FRANKFURTER_JSON = {
     "amount": 1.0,
     "base": "USD",
     "date": "2026-07-17",
-    "rates": {"CNY": 7.2, "EUR": 0.925, "GBP": 0.79},
+    "rates": {"CNY": 7.2, "EUR": 0.925, "GBP": 0.79, "HKD": 7.8, "SGD": 1.35},
 }
 
 
@@ -38,6 +38,10 @@ def test_live_fetch_inverts_rates_and_writes_snapshot(fx_cache_dir, httpx_mock) 
     assert source.rate_date == "2026-07-17"
     assert source.usd_rates["USD"] == Decimal("1.0")
     assert source.usd_rates["EUR"] == Decimal("1.0") / Decimal("0.925")
+    assert source.usd_rates["HKD"] == Decimal("1.0") / Decimal("7.8")
+    assert source.usd_rates["SGD"] == Decimal("1.0") / Decimal("1.35")
+    request = httpx_mock.get_requests()[0]
+    assert request.url.params["symbols"] == "CNY,EUR,GBP,HKD,SGD"
     assert _snapshot_file(fx_cache_dir).exists()
 
 
@@ -55,7 +59,14 @@ def test_stale_snapshot_survives_fetch_failure(fx_cache_dir, httpx_mock) -> None
     snapshot = {
         "rate_date": "2026-07-10",
         "fetched_on": "2026-07-10",
-        "usd_rates": {"USD": "1.0", "EUR": "1.07", "GBP": "1.25", "CNY": "0.139"},
+        "usd_rates": {
+            "USD": "1.0",
+            "EUR": "1.07",
+            "GBP": "1.25",
+            "CNY": "0.139",
+            "HKD": "0.128",
+            "SGD": "0.74",
+        },
     }
     _snapshot_file(fx_cache_dir).write_text(json.dumps(snapshot))
     httpx_mock.add_exception(httpx.ConnectError("offline"))

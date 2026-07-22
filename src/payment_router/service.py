@@ -15,6 +15,7 @@ from payment_router.core.graph import PaymentGraph
 from payment_router.core.models import Route
 from payment_router.decision import DecisionProfile
 from payment_router.networks.base import PaymentNetwork
+from payment_router.networks.cips import CIPSNetwork
 from payment_router.networks.sepa import SEPANetwork
 from payment_router.networks.swift import SWIFTNetwork
 from payment_router.networks.wise import WiseNetwork
@@ -47,7 +48,13 @@ class RoutingSession:
 
 
 def default_networks() -> list[PaymentNetwork]:
-    return [WiseNetwork(), SEPANetwork(), SEPANetwork(instant=True), SWIFTNetwork()]
+    return [
+        WiseNetwork(),
+        SEPANetwork(),
+        SEPANetwork(instant=True),
+        SWIFTNetwork(),
+        CIPSNetwork(),
+    ]
 
 
 def network_display_name(network: PaymentNetwork) -> str:
