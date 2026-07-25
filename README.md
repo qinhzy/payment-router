@@ -121,7 +121,7 @@ target: it adds no authentication, persistence, or payment initiation surface.
 - **Web console:** optional FastAPI backend plus a dependency-free single-page
   frontend sharing the CLI's routing service layer (`remit serve`).
 - **Quality:** Python 3.11-3.13 CI, strict pytest configuration, expanded Ruff
-  rules, package-build validation, and 166 automated tests.
+  rules, package-build validation, and 179 automated tests.
 
 ## Quick start
 
@@ -194,6 +194,10 @@ The detailed algorithm, invariants, and boundaries are documented in
 - The default frozen FX mid-rates make runs reproducible but not
   market-current; `--fx live` uses ECB reference rates, which are daily
   indicative fixings rather than tradable quotes.
+- The FX source is resolved once at startup. A `remit serve --fx live` process
+  left running across a day keeps using the snapshot it started with, and its
+  disclosed rate date is the honest record of that; restart the console to pick
+  up a newer publication.
 - The graph quotes each corridor at the source-equivalent amount; later-hop
   live quotes can differ because the actual arriving amount is path-dependent.
 - Wise delivery estimates for an already funded balance can understate the time

@@ -361,3 +361,28 @@ def test_equivalent_amount_spellings_share_one_cached_session() -> None:
         assert response.status_code == 200
 
     assert factory.calls - baseline == 1
+
+
+def test_meta_reports_the_fx_source_at_request_time() -> None:
+    """The FX disclosure is process state, not a startup snapshot."""
+    from payment_router.core import fx as fx_module
+
+    client = _client()
+    assert client.get("/api/meta").json()["fx"]["mode"] == "frozen"
+
+    try:
+        fx_module.configure(
+            fx_module.RateSource(
+                mode="live",
+                label="ECB reference rates (Frankfurter)",
+                classification=DataSource.VERIFIED,
+                usd_rates=dict(fx_module._FROZEN_RATES_TO_USD),
+                rate_date="2026-07-24",
+            )
+        )
+        payload = client.get("/api/meta").json()["fx"]
+        assert payload["mode"] == "live"
+        assert payload["rate_date"] == "2026-07-24"
+        assert payload["classification"] == "VERIFIED"
+    finally:
+        fx_module.activate("frozen")

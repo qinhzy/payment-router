@@ -363,12 +363,54 @@ async def test_fee_classification_follows_live_fx_source(httpx_mock: HTTPXMock) 
     assert quote.fx_data_source is DataSource.VERIFIED
 
 
-def test_delivery_label_rolling_into_a_non_leap_year() -> None:
-    """29 February must not crash when the next occurrence is a common year."""
+def test_leap_day_label_resolves_within_a_leap_year() -> None:
+    """strptime defaults to 1900, a common year, so this label used to be rejected."""
+    created = datetime(2028, 2, 20, 12, 0, 0, tzinfo=UTC)
+
+    hours = WiseNetwork._parse_formatted_delivery("by February 29", created)
+
+    resolved = created + timedelta(hours=float(hours))
+    assert (resolved.year, resolved.month, resolved.day) == (2028, 2, 29)
+
+
+def test_leap_day_label_skips_common_years_instead_of_moving_the_date() -> None:
+    """29 February exists only in leap years; never silently report the 28th."""
     created = datetime(2028, 3, 1, 12, 0, 0, tzinfo=UTC)
 
     hours = WiseNetwork._parse_formatted_delivery("by February 29", created)
 
-    assert hours > 0
     resolved = created + timedelta(hours=float(hours))
-    assert (resolved.year, resolved.month, resolved.day) == (2029, 2, 28)
+    assert (resolved.year, resolved.month, resolved.day) == (2032, 2, 29)
+
+
+@pytest.mark.parametrize(
+    ("label", "expected"),
+    [
+        ("by Friday, July 24", (2026, 7, 24)),
+        ("by July 24", (2026, 7, 24)),
+        ("by Jul 24", (2026, 7, 24)),
+        ("by Jul. 24", (2026, 7, 24)),
+        ("by Sept 24", (2026, 9, 24)),
+        ("by Sep 24", (2026, 9, 24)),
+        ("by Wednesday", (2026, 7, 22)),
+        ("by December 3", (2026, 12, 3)),
+        ("by January 5", (2027, 1, 5)),
+    ],
+)
+def test_delivery_labels_parse_without_relying_on_the_host_locale(
+    label: str,
+    expected: tuple[int, int, int],
+) -> None:
+    created = datetime(2026, 7, 21, 10, 0, 0, tzinfo=UTC)
+
+    hours = WiseNetwork._parse_formatted_delivery(label, created)
+
+    resolved = created + timedelta(hours=float(hours))
+    assert (resolved.year, resolved.month, resolved.day) == expected
+
+
+def test_delivery_label_rejects_a_non_english_month() -> None:
+    created = datetime(2026, 7, 21, 10, 0, 0, tzinfo=UTC)
+
+    with pytest.raises(ValueError, match="Unsupported date label"):
+        WiseNetwork._parse_formatted_delivery("by juillet 24", created)

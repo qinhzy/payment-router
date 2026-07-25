@@ -201,10 +201,9 @@ def create_app(
             ),
         )
 
-    # Neither payload can change over the app's lifetime; build them once.
+    # The network roster cannot change over the app's lifetime; build it once.
     networks_snapshot = networks_factory()
-    fx_status = fx.current_status()
-    meta_payload: dict[str, object] = {
+    static_meta: dict[str, object] = {
         "version": application.version,
         "disclaimer": DISCLAIMER,
         "currencies": sorted(service.supported_currencies(networks_snapshot)),
@@ -216,16 +215,6 @@ def create_app(
             for network in networks_snapshot
         ],
         "profiles": [profile.value for profile in DecisionProfile],
-        "fx": {
-            "mode": fx_status.mode,
-            "requested_mode": fx_status.requested_mode,
-            "label": fx_status.label,
-            "classification": fx_status.classification.value,
-            "rate_date": fx_status.rate_date,
-            "stale": fx_status.stale,
-            "fallback": fx_status.fallback,
-            "detail": fx_status.detail,
-        },
         "ai": {
             "enabled": explainer is not None,
             "model": explainer.model if explainer is not None else None,
@@ -237,7 +226,23 @@ def create_app(
 
     @application.get("/api/meta")
     async def meta() -> dict[str, object]:
-        return meta_payload
+        # The FX block is read per request, not snapshotted: the active source
+        # is process state that a re-activation can change, and a disclosure
+        # the console shows must not be able to drift from what routing uses.
+        fx_status = fx.current_status()
+        return {
+            **static_meta,
+            "fx": {
+                "mode": fx_status.mode,
+                "requested_mode": fx_status.requested_mode,
+                "label": fx_status.label,
+                "classification": fx_status.classification.value,
+                "rate_date": fx_status.rate_date,
+                "stale": fx_status.stale,
+                "fallback": fx_status.fallback,
+                "detail": fx_status.detail,
+            },
+        }
 
     @application.get("/api/route")
     async def route(

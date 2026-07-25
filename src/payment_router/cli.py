@@ -233,9 +233,11 @@ def sensitivity_command(
     console.print(table)
 
     if report.balanced_region is not None:
+        balanced_path, balanced_networks = report.balanced_region.signature
         console.print(
             Panel(
-                "The balanced (0.50) choice holds for cost weights "
+                f"The balanced (0.50) choice — {' → '.join(balanced_path)} via "
+                f"{', '.join(dict.fromkeys(balanced_networks))} — holds for cost weights "
                 f"{report.balanced_region.cost_weight_start:.2f}–"
                 f"{report.balanced_region.cost_weight_end:.2f}.",
                 title="Stability",
