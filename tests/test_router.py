@@ -679,3 +679,41 @@ async def test_unfundable_corridor_does_not_enumerate_every_simple_path(monkeypa
 
     assert routes == []
     assert yielded == 25
+
+
+async def test_edge_stats_are_cached_across_preferences() -> None:
+    router = await _dense_router(["USD", "EUR", "CNY"], fee="1")
+    preference = RoutingPreference()
+
+    first = router._build_score_context(preference)
+    cached = router._edge_stats_cache
+    second = router._build_score_context(RoutingPreference(cost_weight=1.0, time_weight=0.0))
+
+    assert cached is not None
+    assert router._edge_stats_cache is cached
+    assert (second.max_cost, second.max_time) == (first.max_cost, first.max_time)
+
+
+async def test_edge_stats_recompute_when_the_fx_source_changes() -> None:
+    from payment_router.core import fx as fx_module
+
+    router = await _dense_router(["USD", "EUR", "CNY"], fee="1")
+    before = router._build_score_context(RoutingPreference())
+    generation_before = router._edge_stats_cache[1]
+
+    doubled = {code: rate * 2 for code, rate in fx_module._FROZEN_RATES_TO_USD.items()}
+    doubled["USD"] = Decimal("1.0")
+    try:
+        fx_module.configure(
+            fx_module.RateSource(
+                mode="frozen",
+                label="doubled test table",
+                classification=DataSource.ESTIMATED,
+                usd_rates=doubled,
+            )
+        )
+        after = router._build_score_context(RoutingPreference())
+        assert router._edge_stats_cache[1] != generation_before
+        assert after.max_cost != before.max_cost
+    finally:
+        fx_module.activate("frozen")

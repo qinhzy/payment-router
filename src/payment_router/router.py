@@ -64,6 +64,7 @@ completeness, not correctness.
 class PaymentRouter:
     def __init__(self, graph: PaymentGraph) -> None:
         self._graph = graph
+        self._edge_stats_cache: tuple[object, int, Decimal, Decimal] | None = None
 
     def find_route(
         self,
@@ -215,22 +216,40 @@ class PaymentRouter:
         return [route for _, route in scored_routes]
 
     def _build_score_context(self, preference: RoutingPreference) -> _ScoreContext:
-        edges = [
-            data["edge"]
-            for _, _, _, data in self._graph.graph.edges(keys=True, data=True)
-            if isinstance(data.get("edge"), NetworkEdge)
-        ]
-        max_cost = max(
-            (self._edge_cost_usd(edge) for edge in edges),
-            default=Decimal("0"),
-        )
-        max_time = max((Decimal(str(edge.time_hours)) for edge in edges), default=Decimal("0"))
+        max_cost, max_time = self._edge_stats()
         return _ScoreContext(
             alpha=preference.alpha,
             beta=preference.beta,
             max_cost=max_cost,
             max_time=max_time,
         )
+
+    def _edge_stats(self) -> tuple[Decimal, Decimal]:
+        """Normalization maxima for the current graph and FX source.
+
+        These depend on the graph and the active rate table, never on the
+        preference, so a weight sweep would otherwise rescan every edge once
+        per step. The cache is keyed on the graph object (rebuilding a
+        :class:`PaymentGraph` replaces it) and on the FX generation counter.
+        """
+        graph = self._graph.graph
+        generation = fx.generation()
+        cached = self._edge_stats_cache
+        if cached is not None and cached[0] is graph and cached[1] == generation:
+            return cached[2], cached[3]
+
+        edges = [
+            data["edge"]
+            for _, _, _, data in graph.edges(keys=True, data=True)
+            if isinstance(data.get("edge"), NetworkEdge)
+        ]
+        max_cost = max(
+            (self._edge_cost_usd(edge) for edge in edges),
+            default=Decimal("0"),
+        )
+        max_time = max((edge.time_hours for edge in edges), default=Decimal("0"))
+        self._edge_stats_cache = (graph, generation, max_cost, max_time)
+        return max_cost, max_time
 
     def _weight_function(self, score_context: _ScoreContext):
         def weight(_u: str, _v: str, edge_bundle: dict[str, dict[str, object]]) -> float | None:
@@ -372,9 +391,9 @@ class PaymentRouter:
                 to_node=edge.to_currency,
                 network_name=edge.network_name,
                 fee_usd=edge.fee_usd,
-                time_hours=Decimal(str(edge.time_hours)),
-                time_min_hours=Decimal(str(edge.time_min_hours)),
-                time_max_hours=Decimal(str(edge.time_max_hours)),
+                time_hours=edge.time_hours,
+                time_min_hours=edge.time_min_hours,
+                time_max_hours=edge.time_max_hours,
                 currency_in=edge.from_currency,
                 currency_out=edge.to_currency,
                 fx_rate=edge.fx_rate,
@@ -387,7 +406,7 @@ class PaymentRouter:
         ]
         total_fee_usd = sum((edge.fee_usd for edge in edges), start=Decimal("0"))
         total_time_hours = sum(
-            (Decimal(str(edge.time_hours)) for edge in edges),
+            (edge.time_hours for edge in edges),
             start=Decimal("0"),
         )
         return Route(
@@ -395,11 +414,11 @@ class PaymentRouter:
             total_fee_usd=total_fee_usd,
             total_time_hours=total_time_hours,
             total_time_min_hours=sum(
-                (Decimal(str(edge.time_min_hours)) for edge in edges),
+                (edge.time_min_hours for edge in edges),
                 start=Decimal("0"),
             ),
             total_time_max_hours=sum(
-                (Decimal(str(edge.time_max_hours)) for edge in edges),
+                (edge.time_max_hours for edge in edges),
                 start=Decimal("0"),
             ),
             source_currency=edges[0].from_currency,
@@ -512,9 +531,8 @@ class PaymentRouter:
             if score_context.max_cost > 0
             else 0.0
         )
-        edge_time = Decimal(str(edge.time_hours))
         time_component = (
-            float(edge_time / score_context.max_time) if score_context.max_time > 0 else 0.0
+            float(edge.time_hours / score_context.max_time) if score_context.max_time > 0 else 0.0
         )
         return (score_context.alpha * cost_component) + (score_context.beta * time_component)
 

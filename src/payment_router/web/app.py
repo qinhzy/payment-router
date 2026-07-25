@@ -168,9 +168,10 @@ def create_app(
         amount: str,
     ) -> tuple[service.RoutingSession, dict[str, object]]:
         try:
-            # Validate up front so equivalent spellings ("100", "100.0") share
-            # one cache key and invalid amounts never reach the cache.
-            canonical_amount = service.parse_amount(amount)
+            # Validate up front so invalid amounts never reach the cache, and
+            # normalize the scale so equivalent spellings ("100", "100.0",
+            # "100.00") share one key instead of re-quoting every provider.
+            canonical_amount = service.parse_amount(amount).normalize()
             key = (source.strip().upper(), target.strip().upper(), str(canonical_amount))
             entry, from_cache = await cache.get(
                 key,

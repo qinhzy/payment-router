@@ -260,12 +260,23 @@ class WiseNetwork(PaymentNetwork):
         raise ValueError(f"Unsupported formattedEstimatedDelivery value: {formatted_delivery}")
 
     @staticmethod
-    def _parse_by_day_label(label: str, created_time: datetime) -> datetime:
+    def _same_day_next_year(moment: datetime) -> datetime:
+        try:
+            return moment.replace(year=moment.year + 1)
+        except ValueError:
+            # 29 February rolled into a non-leap year.
+            return moment.replace(year=moment.year + 1, day=28)
+
+    @classmethod
+    def _parse_by_day_label(cls, label: str, created_time: datetime) -> datetime:
         created_utc = created_time.astimezone(UTC)
 
         for date_format in ("%A, %B %d", "%A, %b %d", "%B %d", "%b %d"):
             try:
-                parsed = datetime.strptime(label, date_format)
+                # strptime defaults to year 1900, which is not a leap year, so
+                # a "29 February" label would fail to parse outright. Anchor
+                # the parse to a leap year and take only month and day from it.
+                parsed = datetime.strptime(f"{label} 2024", f"{date_format} %Y")
             except ValueError:
                 continue
 
@@ -279,7 +290,7 @@ class WiseNetwork(PaymentNetwork):
                 tzinfo=UTC,
             )
             if candidate < created_utc:
-                candidate = candidate.replace(year=candidate.year + 1)
+                candidate = cls._same_day_next_year(candidate)
             return candidate
 
         weekdays = {

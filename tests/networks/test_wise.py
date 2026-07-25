@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import httpx
@@ -360,3 +361,14 @@ async def test_fee_classification_follows_live_fx_source(httpx_mock: HTTPXMock) 
     assert quote.fee_data_source is DataSource.VERIFIED
     assert quote.time_data_source is DataSource.VERIFIED
     assert quote.fx_data_source is DataSource.VERIFIED
+
+
+def test_delivery_label_rolling_into_a_non_leap_year() -> None:
+    """29 February must not crash when the next occurrence is a common year."""
+    created = datetime(2028, 3, 1, 12, 0, 0, tzinfo=UTC)
+
+    hours = WiseNetwork._parse_formatted_delivery("by February 29", created)
+
+    assert hours > 0
+    resolved = created + timedelta(hours=float(hours))
+    assert (resolved.year, resolved.month, resolved.day) == (2029, 2, 28)

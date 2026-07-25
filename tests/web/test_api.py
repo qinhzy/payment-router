@@ -346,3 +346,18 @@ def test_sensitivity_runs_off_the_event_loop(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert recorded["sweep"] != recorded["endpoint"]
+
+
+def test_equivalent_amount_spellings_share_one_cached_session() -> None:
+    factory = _CountingFactory()
+    client = _client(factory)
+    baseline = factory.calls
+
+    for amount in ("1000", "1000.0", "1000.00"):
+        response = client.get(
+            "/api/route",
+            params={"source": "USD", "target": "CNY", "amount": amount},
+        )
+        assert response.status_code == 200
+
+    assert factory.calls - baseline == 1

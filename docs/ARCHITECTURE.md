@@ -37,6 +37,10 @@ For edge `e`, the normalized score is:
 score(e) = alpha * cost(e) / max_cost + beta * time(e) / max_time
 ```
 
+`max_cost` and `max_time` depend only on the graph and the active rate table,
+never on the preference, so the router caches them per graph and per FX
+generation rather than rescanning every edge on each routing call.
+
 `alpha` and `beta` are normalized from the requested preference. `cost(e)` is
 the USD-normalized fee plus the non-negative loss implied by the edge rate
 relative to the active FX source's mid-rate table — the frozen teaching table

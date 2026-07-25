@@ -16,12 +16,28 @@ All notable user-visible changes are recorded here. The project follows
   in increasing weight order, so the cap can only return fewer routes than
   requested — it never reorders or downgrades the routes that were found, and
   healthy corridors are unaffected.
+- Wise delivery labels naming 29 February are parsed instead of rejected.
+  `strptime` defaults to year 1900, which is not a leap year, so the label
+  failed to parse and the whole quote was dropped with a provider warning
+  during any leap year. Labels that then roll into a common year resolve to
+  28 February rather than raising.
+- sensitivity regions no longer merge across a weight that produced no route.
+  A gap used to be absorbed into the surrounding interval, which claimed a
+  route won over weights where it did not.
 
 ### Changed
 
 - `/api/sensitivity` runs its weight sweep in a worker thread. The sweep is
   `steps + 1` back-to-back route selections with no awaits, so running it
   inline stalled every other request on the event loop for its duration.
+- the router caches the cost and time maxima used for score normalization.
+  They depend only on the graph and the active FX source, never on the
+  preference, so a sweep rescanned every edge once per step. The cache is
+  invalidated by a graph rebuild or an FX source switch (`fx.generation()`).
+  A 200-step sweep saves about 5% at today's four-currency graph and about
+  50% at the 120-280 edge sizes a wider corridor set would reach.
+- the web session cache normalizes the amount's scale, so `1000`, `1000.0`,
+  and `1000.00` share one entry instead of re-quoting every provider.
 
 ## [0.5.0] - Unreleased
 
