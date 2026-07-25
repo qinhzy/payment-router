@@ -539,3 +539,143 @@ async def test_normalization_prevents_single_dimension_from_dominating() -> None
 
     assert route is not None
     assert route.hops[0].network_name == "FastExpensive"
+
+
+async def _dense_router(currencies: list[str], fee: str) -> PaymentRouter:
+    """A fully connected corridor set: every pair quoted by three networks."""
+    quotes = {
+        (source, target): make_quote(f"{source}{target}", fee, "2", "1.0")
+        for source in currencies
+        for target in currencies
+        if source != target
+    }
+    networks = [FakeNetwork(f"net-{index}", set(currencies), quotes) for index in range(3)]
+    return await _build_router(
+        networks=networks,
+        currencies=currencies,
+        amount=Decimal("1000"),
+    )
+
+
+async def test_top_n_stops_after_the_candidate_budget() -> None:
+    # Fees exceed the amount, so no candidate is fundable and the search can
+    # never reach top_n. Without a budget it would enumerate every simple path.
+    router = await _dense_router(["USD", "EUR", "GBP", "CNY"], fee="500")
+
+    routes = router.find_all_routes(
+        "USD",
+        "CNY",
+        Decimal("100"),
+        RoutingPreference(),
+        top_n=5,
+        max_candidate_paths=1,
+    )
+
+    assert routes == []
+
+
+async def test_candidate_budget_does_not_truncate_healthy_corridors() -> None:
+    router = await _dense_router(["USD", "EUR", "GBP", "CNY"], fee="1")
+
+    bounded = router.find_all_routes(
+        "USD",
+        "CNY",
+        Decimal("1000"),
+        RoutingPreference(),
+        top_n=3,
+    )
+    unbounded = router.find_all_routes(
+        "USD",
+        "CNY",
+        Decimal("1000"),
+        RoutingPreference(),
+        top_n=3,
+        max_candidate_paths=10_000,
+    )
+
+    assert len(bounded) == 3
+    assert [hop.network_name for route in bounded for hop in route.hops] == [
+        hop.network_name for route in unbounded for hop in route.hops
+    ]
+
+
+async def test_candidate_budget_keeps_the_best_ranked_routes_it_found() -> None:
+    # Only the direct USD->CNY hop is fundable; the budget must not disturb it.
+    router = await _build_router(
+        networks=[
+            FakeNetwork(
+                "cheap-direct",
+                {"USD", "EUR", "CNY"},
+                {
+                    ("USD", "CNY"): make_quote("CheapDirect", "1", "5", "7.0"),
+                    ("USD", "EUR"): make_quote("Pricey", "80", "1", "0.9"),
+                    ("EUR", "CNY"): make_quote("Pricey", "80", "1", "7.6"),
+                },
+            ),
+        ],
+        currencies=["USD", "EUR", "GBP", "CNY"],
+        amount=Decimal("100"),
+    )
+
+    routes = router.find_all_routes(
+        "USD",
+        "CNY",
+        Decimal("100"),
+        RoutingPreference(),
+        top_n=5,
+    )
+
+    assert [hop.network_name for route in routes for hop in route.hops] == ["CheapDirect"]
+
+
+async def test_candidate_budget_must_be_positive() -> None:
+    router = await _dense_router(["USD", "CNY"], fee="1")
+
+    with pytest.raises(ValueError, match="max_candidate_paths"):
+        router.find_all_routes(
+            "USD",
+            "CNY",
+            Decimal("1000"),
+            RoutingPreference(),
+            max_candidate_paths=0,
+        )
+
+
+async def test_unfundable_corridor_does_not_enumerate_every_simple_path(monkeypatch) -> None:
+    """The regression guard for the top-N enumeration blow-up.
+
+    A dense corridor set whose candidates are all unfundable used to walk
+    ``shortest_simple_paths`` to exhaustion, which grows combinatorially with
+    the number of currencies.
+    """
+    import networkx as nx
+
+    from payment_router import router as router_module
+
+    yielded = 0
+    original = nx.shortest_simple_paths
+
+    def counting_shortest_simple_paths(*args, **kwargs):
+        nonlocal yielded
+        for path in original(*args, **kwargs):
+            yielded += 1
+            yield path
+
+    monkeypatch.setattr(
+        router_module.nx,
+        "shortest_simple_paths",
+        counting_shortest_simple_paths,
+    )
+
+    router = await _dense_router(["USD", "EUR", "GBP", "CNY"], fee="500")
+    routes = router.find_all_routes(
+        "USD",
+        "CNY",
+        Decimal("100"),
+        RoutingPreference(),
+        top_n=5,
+        max_candidate_paths=25,
+    )
+
+    assert routes == []
+    assert yielded == 25

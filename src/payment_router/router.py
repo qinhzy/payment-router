@@ -42,6 +42,24 @@ class RoutingPreference:
 
 Route.model_rebuild(_types_namespace={"RoutingPreference": RoutingPreference})
 
+MAX_CANDIDATE_PATHS = 500
+"""Safety valve bounding how many candidate paths top-N routing inspects.
+
+``nx.shortest_simple_paths`` is a lazy generator over *every* simple path in
+the expanded graph. Top-N enumeration normally stops as soon as it collects
+``top_n`` fundable routes, but a corridor where fewer routes are fundable (a
+small amount whose balance cannot cover later fees) or where every candidate
+exceeds ``max_hops`` never reaches that stop condition and walks the whole
+generator instead. That enumeration grows combinatorially with the corridor
+set: a six-currency graph enumerates roughly 8,000 paths at an increasing
+per-path cost, taking tens of seconds.
+
+Candidates are generated in increasing weight order, so stopping early can
+only return *fewer* routes than requested — never a worse-ranked set, and
+never a differently ordered one. Reaching the budget therefore degrades
+completeness, not correctness.
+"""
+
 
 class PaymentRouter:
     def __init__(self, graph: PaymentGraph) -> None:
@@ -143,10 +161,13 @@ class PaymentRouter:
         amount: Decimal,
         preference: RoutingPreference,
         top_n: int = 3,
+        max_candidate_paths: int = MAX_CANDIDATE_PATHS,
     ) -> list[Route]:
         source_currency = from_currency.strip().upper()
         target_currency = to_currency.strip().upper()
 
+        if max_candidate_paths < 1:
+            raise ValueError("max_candidate_paths must be a positive integer")
         if top_n <= 0 or not amount.is_finite() or amount <= 0:
             return []
         if source_currency == target_currency:
@@ -174,15 +195,18 @@ class PaymentRouter:
 
         scored_routes: list[tuple[float, Route]] = []
         try:
-            for expanded_path in path_generator:
+            for examined, expanded_path in enumerate(path_generator, start=1):
                 edges = self._edges_from_expanded_path(expanded_graph, expanded_path)
-                if len(edges) > preference.max_hops:
-                    continue
-
-                route = self._route_from_edges(edges, amount, preference)
-                if route is not None:
-                    scored_routes.append((self._edge_path_score(edges, score_context), route))
-                if len(scored_routes) == top_n:
+                if len(edges) <= preference.max_hops:
+                    route = self._route_from_edges(edges, amount, preference)
+                    if route is not None:
+                        scored_routes.append((self._edge_path_score(edges, score_context), route))
+                        if len(scored_routes) == top_n:
+                            break
+                # Without this bound a corridor that never yields `top_n`
+                # fundable routes would enumerate every simple path. See
+                # MAX_CANDIDATE_PATHS for why truncating here is safe.
+                if examined >= max_candidate_paths:
                     break
         except (nx.NetworkXNoPath, nx.NodeNotFound):
             return []

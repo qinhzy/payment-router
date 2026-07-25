@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from asyncio import Lock
@@ -314,7 +315,12 @@ def create_app(
         steps: Annotated[int, Query(ge=10, le=400)] = 100,
     ) -> dict[str, object]:
         session, quotes_meta = await build_session(source, target, amount)
-        report = sensitivity.analyze(
+        # A sweep runs `steps + 1` full route selections back to back. That is
+        # CPU-bound work with no awaits, so running it inline would stall every
+        # other request on the event loop for the whole sweep. The router and
+        # its graph are read-only here, which makes the offload safe.
+        report = await asyncio.to_thread(
+            sensitivity.analyze,
             session.router,
             session.source_currency,
             session.target_currency,

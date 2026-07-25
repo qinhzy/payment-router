@@ -3,6 +3,26 @@
 All notable user-visible changes are recorded here. The project follows
 [Semantic Versioning](https://semver.org/) while it approaches a stable API.
 
+## [0.5.1] - Unreleased
+
+### Fixed
+
+- bounded top-N candidate enumeration. A corridor that could not yield
+  `top_n` fundable routes previously walked every simple path in the
+  expanded graph, which grows combinatorially with the corridor set: a
+  six-currency graph took roughly 27 seconds and an eight-currency graph did
+  not finish. `MAX_CANDIDATE_PATHS` now caps the candidates inspected, so the
+  same searches complete in about 0.25 s and 0.36 s. Candidates are generated
+  in increasing weight order, so the cap can only return fewer routes than
+  requested — it never reorders or downgrades the routes that were found, and
+  healthy corridors are unaffected.
+
+### Changed
+
+- `/api/sensitivity` runs its weight sweep in a worker thread. The sweep is
+  `steps + 1` back-to-back route selections with no awaits, so running it
+  inline stalled every other request on the event loop for its duration.
+
 ## [0.5.0] - Unreleased
 
 ### Added
