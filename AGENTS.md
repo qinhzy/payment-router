@@ -6,14 +6,16 @@
 
 ## 范围
 
-- 三个 network：`wise`、`sepa`、`swift`
-- 四个货币：当前默认 `USD`、`EUR`、`GBP`、`CNY`
+- 四个 network 家族：`wise`、`sepa`（含 Instant）、`swift`、`cips`
+- 六个货币：当前默认 `USD`、`EUR`、`GBP`、`CNY`、`HKD`、`SGD`
+- `cips` 是仅面向 CNY 目标方向的教学场景；结构事实有来源，全部数字参数
+  均为 `ESTIMATED`
 - 支持输出 Mermaid 路由可视化
 - 本地 Web 控制台（`remit serve`）：FastAPI API + 静态单页前端
 - 可插拔 FX 汇率源：默认冻结教学表；`--fx live` 使用 ECB 参考汇率快照，
   离线时显式回退并降级标注
 - 时效区间模型与敏感性分析：每跳携带 [min, max] 时效边界（SEPA 采用
-  scheme 上限语义，SWIFT 场景带登记的波动带），`remit sensitivity` 与
+  scheme 上限语义，SWIFT/CIPS 场景带登记的波动带），`remit sensitivity` 与
   Web 面板展示权重扫描的翻转边界与均衡稳定区间
 - 可选 AI 解读：仅在 Anthropic 凭证可解析时启用；解读必须严格基于控制台
   展示的 JSON，保留教学模拟器免责声明，不得编造数字

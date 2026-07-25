@@ -33,8 +33,8 @@ PROVENANCE_RECORDS = (
         network="Shared FX",
         metric="USD normalization rates (default source)",
         classification=DataSource.ESTIMATED,
-        value="USD 1.00; EUR 1.08; GBP 1.27; CNY 0.14",
-        checked_on="2026-04-19",
+        value="USD 1.00; EUR 1.08; GBP 1.27; CNY 0.14; HKD 0.128; SGD 0.74",
+        checked_on="2026-07-21",
         reference=None,
         caveat="Frozen teaching values for reproducibility, not current market pricing.",
     ),
@@ -112,5 +112,31 @@ PROVENANCE_RECORDS = (
         checked_on="2026-07-20",
         reference=None,
         caveat="Scenario assumptions, not an industry median or a bank quote.",
+    ),
+    ProvenanceRecord(
+        evidence_id="cips-topology",
+        network="CIPS",
+        metric="RMB role, participant structure, operating window",
+        classification=DataSource.VERIFIED,
+        value="Wholesale cross-border RMB system; direct/indirect participants; 5×24h+4h",
+        checked_on="2026-07-21",
+        reference="https://www.cips.com.cn/kjjqgs/jrcips/index.shtml",
+        caveat=(
+            "Structural evidence only; it does not verify corridor availability, "
+            "customer fees, FX spread, or end-to-end delivery time."
+        ),
+    ),
+    ProvenanceRecord(
+        evidence_id="cips-model-parameters",
+        network="CIPS",
+        metric="hops, fees, time, FX spread",
+        classification=DataSource.ESTIMATED,
+        value="2 hops; $8 + 0.1%; 6h (band 1-12h) per hop; 0.3% spread",
+        checked_on="2026-07-21",
+        reference=None,
+        caveat=(
+            "Scenario assumptions compress an on-ramp and participant path; the published "
+            "operating window is not an arrival-time guarantee."
+        ),
     ),
 )
