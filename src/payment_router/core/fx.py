@@ -7,7 +7,13 @@ Two sources exist:
 - the **live ECB source**: daily euro reference rates served by the
   Frankfurter API, classified ``VERIFIED``, cached as an on-disk snapshot so
   reruns on the same day are reproducible and offline runs degrade
-  explicitly (stale snapshot first, frozen table as the last resort).
+  explicitly (stale snapshot first, frozen table as the last resort);
+- the **historical ECB source**: the published fixing for a named past date,
+  also ``VERIFIED``. A past fixing never changes, so its snapshot is cached
+  per date and reused forever. ECB publishes on business days only, so a
+  weekend or holiday request resolves to the preceding published day; the
+  requested and returned dates are both retained so the difference is
+  visible rather than silently absorbed.
 
 The module-level functions (:func:`get_mid_rate`, :func:`to_usd`) always
 read the active source, so routing, scoring, and fee normalization follow
@@ -19,7 +25,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 from pathlib import Path
 
@@ -27,11 +33,14 @@ import httpx
 
 from payment_router.core.models import DataSource
 
-FRANKFURTER_URL = "https://api.frankfurter.dev/v1/latest"
+FRANKFURTER_BASE_URL = "https://api.frankfurter.dev/v1"
+FRANKFURTER_URL = f"{FRANKFURTER_BASE_URL}/latest"
 FX_MODE_ENV_VAR = "PAYMENT_ROUTER_FX"
 CACHE_DIR_ENV_VAR = "PAYMENT_ROUTER_FX_CACHE_DIR"
 _SNAPSHOT_FILENAME = "fx_snapshot.json"
 _AMOUNT_QUANTUM = Decimal("0.0001")
+# The ECB euro reference series begins on 1999-01-04; nothing earlier exists.
+_EARLIEST_FIXING = date(1999, 1, 4)
 
 _FROZEN_RATES_TO_USD: dict[str, Decimal] = {
     "USD": Decimal("1.0"),
@@ -63,6 +72,7 @@ class RateSource:
     rate_date: str | None = None
     fetched_on: str | None = None
     stale: bool = False
+    requested_date: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +87,7 @@ class FxStatus:
     stale: bool
     fallback: bool
     detail: str
+    requested_date: str | None = None
 
 
 def _frozen_source() -> RateSource:
@@ -161,11 +172,28 @@ def configure(source: RateSource) -> None:
     )
 
 
-def activate(mode: str = "frozen", *, timeout_seconds: float = 10.0) -> FxStatus:
-    """Activate a source by mode name; live failures fall back explicitly."""
+def activate(
+    mode: str = "frozen",
+    *,
+    timeout_seconds: float = 10.0,
+    on_date: str | None = None,
+) -> FxStatus:
+    """Activate a source by mode name; live failures fall back explicitly.
+
+    ``mode="historical"`` requires ``on_date`` (an ISO ``YYYY-MM-DD``).
+    Unlike the live mode, a historical request has no safe fallback: the
+    frozen teaching table is not the rate that applied on that date, so an
+    unavailable fixing raises instead of silently substituting one.
+    """
     global _active_source, _current_status, _generation
-    if mode not in {"frozen", "live"}:
+    if mode not in {"frozen", "live", "historical"}:
         raise ValueError(f"unknown FX mode: {mode}")
+    if mode == "historical":
+        if on_date is None:
+            raise ValueError("historical FX mode requires a date")
+        return _activate_historical(on_date, timeout_seconds=timeout_seconds)
+    if on_date is not None:
+        raise ValueError(f"{mode} FX mode does not accept a date")
 
     if mode == "frozen":
         _active_source = _frozen_source()
@@ -217,6 +245,69 @@ def activate(mode: str = "frozen", *, timeout_seconds: float = 10.0) -> FxStatus
     return _current_status
 
 
+def _activate_historical(on_date: str, *, timeout_seconds: float) -> FxStatus:
+    global _active_source, _current_status, _generation
+    source = historical_source(on_date, timeout_seconds=timeout_seconds)
+    _active_source = source
+    _generation += 1
+    detail = f"ECB reference rates published for {source.rate_date}."
+    if source.rate_date != source.requested_date:
+        detail += (
+            f" {source.requested_date} has no published fixing"
+            " (weekend or holiday); the preceding publication is used."
+        )
+    _current_status = FxStatus(
+        requested_mode="historical",
+        mode="historical",
+        label=source.label,
+        classification=source.classification,
+        rate_date=source.rate_date,
+        stale=False,
+        fallback=False,
+        detail=detail,
+        requested_date=source.requested_date,
+    )
+    return _current_status
+
+
+def historical_source(on_date: str, *, timeout_seconds: float = 10.0) -> RateSource:
+    """Return the ECB fixing published for ``on_date``.
+
+    A past fixing is immutable, so a cached snapshot is authoritative and is
+    never refreshed. Raises :class:`FxLiveUnavailableError` when the date
+    cannot be fetched and was never cached — a historical question has no
+    honest fallback answer.
+    """
+    normalized = _normalize_date(on_date)
+    snapshot_path = _snapshot_path(normalized)
+    snapshot = _load_snapshot(snapshot_path)
+    if snapshot is not None:
+        return snapshot
+
+    fresh = _fetch_frankfurter(timeout_seconds, on_date=normalized)
+    _write_snapshot(snapshot_path, fresh)
+    return fresh
+
+
+def validate_date(on_date: str) -> str:
+    """Normalize an ISO rate date, raising ``ValueError`` when unusable."""
+    return _normalize_date(on_date)
+
+
+def _normalize_date(on_date: str) -> str:
+    candidate = on_date.strip()
+    try:
+        parsed = datetime.strptime(candidate, "%Y-%m-%d").replace(tzinfo=UTC)
+    except ValueError:
+        raise ValueError(f"FX date must be ISO YYYY-MM-DD: {on_date}") from None
+    today = datetime.now(UTC).date()
+    if parsed.date() > today:
+        raise ValueError(f"FX date is in the future: {candidate}")
+    if parsed.date() < _EARLIEST_FIXING:
+        raise ValueError(f"FX date precedes the ECB reference series: {candidate}")
+    return candidate
+
+
 def live_source(*, timeout_seconds: float = 10.0) -> RateSource:
     """Return ECB rates: today's snapshot, else a fresh fetch, else stale.
 
@@ -240,11 +331,18 @@ def live_source(*, timeout_seconds: float = 10.0) -> RateSource:
     return fresh
 
 
-def _fetch_frankfurter(timeout_seconds: float) -> RateSource:
+def _fetch_frankfurter(timeout_seconds: float, on_date: str | None = None) -> RateSource:
+    """Fetch a rate set. ``on_date`` selects a historical fixing.
+
+    ECB publishes on business days only, so Frankfurter answers a weekend or
+    holiday request with the preceding published day. The response's own date
+    is therefore authoritative and is kept separate from what was asked for.
+    """
     symbols = sorted(_SUPPORTED_CURRENCIES - {"USD"})
+    url = FRANKFURTER_URL if on_date is None else f"{FRANKFURTER_BASE_URL}/{on_date}"
     try:
         response = httpx.get(
-            FRANKFURTER_URL,
+            url,
             params={"base": "USD", "symbols": ",".join(symbols)},
             timeout=timeout_seconds,
         )
@@ -269,32 +367,47 @@ def _fetch_frankfurter(timeout_seconds: float) -> RateSource:
         raise FxLiveUnavailableError(f"Frankfurter response incomplete: {error}") from error
 
     return RateSource(
-        mode="live",
-        label="ECB reference rates (Frankfurter)",
+        mode="live" if on_date is None else "historical",
+        label=(
+            "ECB reference rates (Frankfurter)"
+            if on_date is None
+            else f"ECB reference rates for {rate_date} (Frankfurter)"
+        ),
         classification=DataSource.VERIFIED,
         usd_rates=usd_rates,
         rate_date=rate_date,
         fetched_on=datetime.now(UTC).date().isoformat(),
+        requested_date=on_date,
     )
 
 
-def _snapshot_path() -> Path:
+def _snapshot_path(on_date: str | None = None) -> Path:
     base = os.environ.get(CACHE_DIR_ENV_VAR)
     root = Path(base) if base else Path.home() / ".cache" / "payment-router"
-    return root / _SNAPSHOT_FILENAME
+    if on_date is None:
+        return root / _SNAPSHOT_FILENAME
+    return root / f"fx_snapshot_{on_date}.json"
 
 
 def _load_snapshot(path: Path) -> RateSource | None:
     try:
         payload = json.loads(path.read_text())
         usd_rates = {currency: Decimal(value) for currency, value in payload["usd_rates"].items()}
+        requested_date = payload.get("requested_date")
+        rate_date = str(payload["rate_date"])
+        historical = requested_date is not None
         source = RateSource(
-            mode="live",
-            label="ECB reference rates (Frankfurter)",
+            mode="historical" if historical else "live",
+            label=(
+                f"ECB reference rates for {rate_date} (Frankfurter)"
+                if historical
+                else "ECB reference rates (Frankfurter)"
+            ),
             classification=DataSource.VERIFIED,
             usd_rates=usd_rates,
-            rate_date=str(payload["rate_date"]),
+            rate_date=rate_date,
             fetched_on=str(payload["fetched_on"]),
+            requested_date=str(requested_date) if historical else None,
         )
     except (OSError, ValueError, KeyError, TypeError, InvalidOperation):
         return None
@@ -304,11 +417,13 @@ def _load_snapshot(path: Path) -> RateSource | None:
 
 
 def _write_snapshot(path: Path, source: RateSource) -> None:
-    payload = {
+    payload: dict[str, object] = {
         "rate_date": source.rate_date,
         "fetched_on": source.fetched_on,
         "usd_rates": {currency: str(rate) for currency, rate in source.usd_rates.items()},
     }
+    if source.requested_date is not None:
+        payload["requested_date"] = source.requested_date
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2, sort_keys=True))

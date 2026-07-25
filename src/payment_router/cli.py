@@ -14,7 +14,7 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
-from payment_router import sensitivity, service
+from payment_router import comparison, sensitivity, service
 from payment_router.core import fx
 from payment_router.decision import (
     DecisionProfile,
@@ -26,7 +26,12 @@ from payment_router.networks.base import PaymentNetwork
 from payment_router.provenance import PROVENANCE_RECORDS
 from payment_router.router import PaymentRouter
 from payment_router.service import BuildWarning, RoutingRequestError
-from payment_router.visualizer import format_hours, route_to_mermaid, routes_to_comparison_table
+from payment_router.visualizer import (
+    format_amount,
+    format_hours,
+    route_to_mermaid,
+    routes_to_comparison_table,
+)
 
 app = typer.Typer(
     help="Teaching-oriented CLI simulator for cross-border payment routing.",
@@ -252,6 +257,124 @@ def sensitivity_command(
                 border_style="yellow",
             ),
         )
+
+
+@app.command("compare")
+def compare_command(
+    from_currency: Annotated[str, typer.Argument(help="Source currency code.")],
+    to_currency: Annotated[str, typer.Argument(help="Target currency code.")],
+    amount: Annotated[str, typer.Argument(help="Amount to send.")],
+    on_date: Annotated[
+        str,
+        typer.Option("--on", help="Rate date to price the corridor at (YYYY-MM-DD)."),
+    ],
+    against: Annotated[
+        str | None,
+        typer.Option(
+            "--against",
+            help="Baseline rate date; defaults to the latest published fixing.",
+        ),
+    ] = None,
+    prefer: Annotated[
+        DecisionProfile,
+        typer.Option("--prefer", help="Profile used on both sides of the comparison."),
+    ] = DecisionProfile.BALANCED,
+) -> None:
+    """Compare one corridor across two ECB rate dates."""
+    try:
+        report = asyncio.run(
+            comparison.compare_dates(
+                from_currency,
+                to_currency,
+                amount,
+                _instantiate_networks,
+                on_date=on_date,
+                against_date=against,
+                profile=prefer,
+            )
+        )
+    except (RoutingRequestError, ValueError) as error:
+        _print_error(str(error))
+        raise typer.Exit(code=1) from None
+    except fx.FxLiveUnavailableError as error:
+        _print_error(f"Historical rates unavailable: {error}")
+        raise typer.Exit(code=1) from None
+
+    if report.baseline.route is None or report.candidate.route is None:
+        _print_error(
+            service.no_route_message(
+                report.source_currency,
+                report.target_currency,
+                report.amount,
+            )
+        )
+        raise typer.Exit(code=1)
+
+    table = Table(
+        title=(
+            f"{report.source_currency} → {report.target_currency} "
+            f"{format_amount(report.amount)} · {report.profile.value}"
+        ),
+        header_style="bold white",
+    )
+    table.add_column("Rate date")
+    table.add_column("Mid-rate", justify="right")
+    table.add_column("Route", style="cyan")
+    table.add_column("Networks")
+    table.add_column("Fee (USD)", justify="right")
+    table.add_column("ETA", justify="right")
+    table.add_column("Recipient gets", justify="right")
+
+    for side in (report.baseline, report.candidate):
+        route = side.route
+        path = " → ".join([route.source_currency, *(hop.to_node for hop in route.hops)])
+        networks = ", ".join(dict.fromkeys(hop.network_name for hop in route.hops))
+        table.add_row(
+            _rate_date_label(side),
+            f"{side.mid_rate:.6f}" if side.mid_rate is not None else "—",
+            path,
+            networks,
+            f"${route.total_fee_usd.quantize(Decimal('0.01')):.2f}",
+            f"{format_hours(route.total_time_hours)}h",
+            f"{format_amount(route.final_amount)} {route.target_currency}",
+        )
+    console.print(table)
+
+    delta_lines = [
+        f"Mid-rate: {_signed(report.mid_rate_delta, 6)}",
+        f"Fee: {_signed(report.fee_delta_usd, 2)} USD",
+        f"Recipient gets: {_signed(report.receive_delta, 2)} {report.target_currency}",
+    ]
+    if report.route_changed:
+        delta_lines.append("The winning route differs between the two dates.")
+    console.print(
+        Panel(
+            "\n".join(delta_lines),
+            title=f"Change from {report.baseline.label} to {report.candidate.label}",
+            border_style="green",
+        )
+    )
+    console.print(
+        Panel(
+            "\n".join(f"• {caveat}" for caveat in report.caveats),
+            title="What this does and does not show",
+            border_style="yellow",
+        )
+    )
+
+
+def _rate_date_label(side) -> str:
+    if side.requested_date is not None and side.rate_date != side.requested_date:
+        return f"{side.rate_date} (asked {side.requested_date})"
+    return side.rate_date or side.label
+
+
+def _signed(value, places: int) -> str:
+    if value is None:
+        return "—"
+    quantum = Decimal(1).scaleb(-places)
+    rounded = value.quantize(quantum)
+    return f"+{rounded}" if rounded >= 0 else str(rounded)
 
 
 @app.command("networks")

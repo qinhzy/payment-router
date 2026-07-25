@@ -20,6 +20,17 @@ class PaymentNetwork(ABC):
     def supported_currencies(self) -> set[str]:
         """Return the currencies this network can handle."""
 
+    def quotes_at_request_time(self) -> bool:
+        """Whether a quote reflects the moment it is requested.
+
+        A live-quoting adapter cannot be replayed against a past rate date:
+        its fee and delivery estimate are today's whatever FX table is
+        active, so mixing the two would describe a route that never existed.
+        Scheme rules and scenario parameters are date-independent, so those
+        models answer ``False`` and stay eligible for historical runs.
+        """
+        return False
+
     def display_name(self) -> str:
         """Human-readable network name used in warnings, tables, and the API."""
         explicit_name = getattr(self, "_name", None)

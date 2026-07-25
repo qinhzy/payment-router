@@ -121,6 +121,30 @@ timing bands that are scenario values. Caveats stay qualitative because the
 registry has no evidence for a numeric later-hop correction; inventing one
 would violate the provenance contract.
 
+## Historical comparison
+
+`comparison.py` prices one corridor under two ECB rate dates. Only the FX
+table moves between the two runs: scheme rules and scenario parameters are
+date-independent assumptions and are identical on both sides.
+
+Networks declare whether they quote at request time. A live-quoting adapter
+has no rate for a past date, so it is dropped from a historical run — and from
+the comparison's baseline as well, even when that baseline is the latest
+fixing. Restricting both sides to the same providers is what makes the deltas
+attributable to the rate regime; leaving a live adapter on one side only would
+surface a provider-set difference as though it were an FX effect. The
+exclusion is reported as a caveat rather than applied silently.
+
+A historical fixing is immutable, so its snapshot is cached per date and never
+revalidated. Unlike live mode it has no fallback: the frozen teaching table is
+not the rate that applied on a past date, so an unavailable fixing raises. ECB
+publishes on business days only, so weekend and holiday requests resolve to the
+preceding publication, and both the requested and returned dates are kept.
+
+The report is a comparison of rate regimes, not a reconstruction of what a
+transfer would have cost on a past day. The simulator has no evidence for the
+latter and does not claim it.
+
 ## Monetary replay
 
 At every hop:
@@ -143,8 +167,8 @@ always agree on routing behavior and error messages.
 
 - `cli.py` renders Rich tables, panels, and Mermaid source in the terminal.
 - `web/app.py` is a FastAPI application (optional `web` extra) exposing
-  `/api/meta`, `/api/route`, `/api/decide`, `/api/sensitivity`, and
-  `/api/sources`, and serving the static single-page console from
+  `/api/meta`, `/api/route`, `/api/decide`, `/api/sensitivity`,
+  `/api/compare`, and `/api/sources`, and serving the static single-page console from
   `web/static/`. JSON amounts reuse the exact CLI formatting helpers, so both
   frontends display identical numbers.
 - A preference sweep runs `steps + 1` route selections with no awaits between

@@ -12,6 +12,8 @@
   const routeButton = $("#route-button");
   const decideButton = $("#decide-button");
   const sensitivityButton = $("#sensitivity-button");
+  const compareButton = $("#compare-button");
+  const onDateInput = $("#on-date");
   const alertsBox = $("#alerts");
   const warningsBox = $("#warnings");
   const resultsBox = $("#results");
@@ -208,20 +210,21 @@
   }
 
   function buttonForKind(kind) {
+    if (kind === "compare") return compareButton;
     if (kind === "decide") return decideButton;
     if (kind === "sensitivity") return sensitivityButton;
     return routeButton;
   }
 
   function setBusy(busy, activeButton) {
-    [routeButton, decideButton, sensitivityButton].forEach((button) => {
+    [routeButton, decideButton, sensitivityButton, compareButton].forEach((button) => {
       button.disabled = busy;
     });
     if (busy) {
       activeButton.dataset.label = activeButton.textContent;
       activeButton.replaceChildren(svg('<span class="spinner"></span>'), document.createTextNode(" Working…"));
     } else {
-      [routeButton, decideButton, sensitivityButton].forEach((button) => {
+      [routeButton, decideButton, sensitivityButton, compareButton].forEach((button) => {
         if (button.dataset.label) {
           button.textContent = button.dataset.label;
           delete button.dataset.label;
@@ -277,6 +280,7 @@
       amount: amountInput.value.trim(),
       profile: form.elements.profile.value,
       top_n: form.elements.top_n.value,
+      on_date: onDateInput.value,
     };
   }
 
@@ -288,7 +292,10 @@
       to: request.target,
       amount: request.amount,
     });
-    if (kind === "decide" || kind === "sensitivity") {
+    if (kind === "compare") {
+      params.set("view", kind);
+      params.set("on", request.on_date);
+    } else if (kind === "decide" || kind === "sensitivity") {
       params.set("view", kind);
     } else {
       params.set("profile", request.profile);
@@ -305,7 +312,9 @@
     if (!source || !target || !amount) return null;
     const view = params.get("view");
     return {
-      kind: view === "decide" || view === "sensitivity" ? view : "route",
+      kind:
+        view === "decide" || view === "sensitivity" || view === "compare" ? view : "route",
+      on_date: params.get("on") || "",
       source: source.toUpperCase(),
       target: target.toUpperCase(),
       amount,
@@ -316,6 +325,7 @@
 
   function applyRequestToForm(request) {
     amountInput.value = request.amount;
+    if (request.on_date) onDateInput.value = request.on_date;
     const hasOption = (select, value) =>
       [...select.options].some((option) => option.value === value);
     if (hasOption(sourceSelect, request.source)) sourceSelect.value = request.source;
@@ -359,6 +369,7 @@
       amount: request.amount,
       profile: request.profile,
       top_n: request.top_n,
+      on_date: request.on_date,
     };
     const keyOf = (item) => JSON.stringify([
       item.kind,
@@ -367,6 +378,7 @@
       item.amount,
       item.profile,
       item.top_n,
+      item.on_date,
     ]);
     const next = [
       entry,
@@ -401,7 +413,9 @@
             ? "compare"
             : item.kind === "sensitivity"
               ? "sensitivity"
-              : item.profile
+              : item.kind === "compare"
+                ? `vs ${item.on_date || "a past date"}`
+                : item.profile
         )
       );
       chip.addEventListener("click", () => {
@@ -887,6 +901,86 @@
     resultsBox.replaceChildren(...nodes);
   }
 
+  /* ---------- comparison rendering ---------- */
+
+  function compareSideCard(side, target, isCandidate) {
+    const card = el("div", `compare-side${isCandidate ? " is-candidate" : ""}`);
+    const heading = el("div", "compare-date");
+    heading.append(document.createTextNode(side.rate_date || side.label));
+    if (side.resolved_to_earlier_publication) {
+      heading.append(el("span", "resolved", `asked ${side.requested_date}`));
+    }
+    card.append(heading);
+
+    const rows = el("div", "compare-rows");
+    const addRow = (label, valueNode) => {
+      const row = el("div");
+      row.append(el("span", "label", label));
+      const value = el("span", "value");
+      value.append(valueNode);
+      row.append(value);
+      rows.append(row);
+    };
+
+    const route = side.route;
+    addRow("Mid-rate", document.createTextNode(side.mid_rate ? fmtRate(side.mid_rate) : "—"));
+    addRow("Route", pathFragment(route.path, "compare-path"));
+    addRow(
+      "Networks",
+      document.createTextNode([...new Set(route.hops.map((h) => h.network))].join(", "))
+    );
+    addRow("Fee", document.createTextNode(`$${fmtNumber(route.total_fee_usd)}`));
+    addRow("ETA", document.createTextNode(humanizeHours(route.total_time_hours)));
+    addRow("Recipient gets", document.createTextNode(fmtMoney(route.final_amount, target)));
+    card.append(rows);
+    return card;
+  }
+
+  function renderComparison(data) {
+    const target = data.request.target;
+    const panel = el("section", "panel");
+    const header = el("div", "panel-header");
+    header.append(el("h2", "", "Rate-date comparison"));
+    header.append(
+      el("span", "hint", "Same corridor, same rails — only the ECB fixing differs")
+    );
+    panel.append(header);
+
+    const grid = el("div", "compare-grid");
+    grid.append(compareSideCard(data.baseline, target, false));
+    grid.append(compareSideCard(data.candidate, target, true));
+    panel.append(grid);
+
+    const deltas = el("div", "delta-rows");
+    const addDelta = (label, text) => {
+      const row = el("div");
+      row.append(el("span", "label", label));
+      row.append(el("span", "value", text));
+      deltas.append(row);
+    };
+    addDelta(
+      "Mid-rate change",
+      data.deltas.mid_rate ? fmtSigned(data.deltas.mid_rate) : "—"
+    );
+    addDelta("Fee change", data.deltas.fee_usd ? `${fmtSigned(data.deltas.fee_usd)} USD` : "—");
+    addDelta(
+      "Recipient gets",
+      data.deltas.receive ? `${fmtSigned(data.deltas.receive)} ${target}` : "—"
+    );
+    if (data.deltas.route_changed) {
+      addDelta("Winning route", "differs between the two dates");
+    }
+    panel.append(deltas);
+
+    if (data.caveats && data.caveats.length > 0) {
+      const caveats = el("div", "caveat-rows");
+      data.caveats.forEach((caveat) => caveats.append(el("div", "", `⚠ ${caveat}`)));
+      panel.append(caveats);
+    }
+
+    resultsBox.replaceChildren(panel);
+  }
+
   /* ---------- sources rendering ---------- */
 
   function renderSources(records) {
@@ -1117,13 +1211,17 @@
           ? await apiGet("/api/decide", corridor, signal)
           : kind === "sensitivity"
             ? await apiGet("/api/sensitivity", corridor, signal)
-            : await apiGet("/api/route", request, signal);
+            : kind === "compare"
+              ? await apiGet("/api/compare", { ...corridor, on: request.on_date }, signal)
+              : await apiGet("/api/route", request, signal);
       if (signal.aborted) return;
       showWarnings(data.warnings);
       if (kind === "decide") {
         renderDecisions(data);
       } else if (kind === "sensitivity") {
         renderSensitivity(data);
+      } else if (kind === "compare") {
+        renderComparison(data);
       } else {
         renderRoutes(data);
       }
@@ -1155,6 +1253,13 @@
   sensitivityButton.addEventListener("click", () =>
     runRequest("sensitivity", sensitivityButton)
   );
+  compareButton.addEventListener("click", () => {
+    if (!onDateInput.value) {
+      showError("Pick a rate date to compare against.");
+      return;
+    }
+    runRequest("compare", compareButton);
+  });
 
   const initialEmptyState = resultsBox.firstElementChild;
 
@@ -1196,6 +1301,8 @@
 
   async function boot() {
     renderRecents();
+    // The backend rejects future dates; do not offer them in the picker.
+    onDateInput.max = new Date().toISOString().slice(0, 10);
     const metaPromise = apiGet("/api/meta", {});
     const sourcesPromise = apiGet("/api/sources", {});
     try {

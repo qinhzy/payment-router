@@ -437,3 +437,88 @@ def test_meta_reports_the_fx_source_at_request_time() -> None:
         assert payload["classification"] == "VERIFIED"
     finally:
         fx_module.activate("frozen")
+
+
+def _compare_client(monkeypatch, tmp_path):
+    from payment_router.core import fx as fx_module
+
+    monkeypatch.setenv(fx_module.CACHE_DIR_ENV_VAR, str(tmp_path))
+    return _client(_rate_sensitive_networks)
+
+
+def _rate_sensitive_networks() -> list[PaymentNetwork]:
+    """Scenario rails whose quoted rate tracks the active FX table."""
+    from decimal import Decimal
+
+    from payment_router.core import fx as fx_module
+    from payment_router.core.models import NetworkQuote
+
+    class Scenario(PaymentNetwork):
+        def display_name(self) -> str:
+            return "SWIFT"
+
+        def supported_currencies(self) -> set[str]:
+            return {"USD", "CNY"}
+
+        def get_quote(self, amount, source, target):
+            if source == target:
+                return None
+            return NetworkQuote(
+                network_name="SWIFT",
+                fee_usd=Decimal("20"),
+                time_hours=Decimal("30"),
+                fx_rate=fx_module.get_mid_rate(source, target) * Decimal("0.99"),
+                data_source=DataSource.ESTIMATED,
+            )
+
+    return [Scenario()]
+
+
+def test_compare_returns_both_sides_and_deltas(monkeypatch, tmp_path, httpx_mock) -> None:
+    from payment_router.core import fx as fx_module
+
+    january = {
+        "amount": 1.0,
+        "base": "USD",
+        "date": "2024-01-02",
+        "rates": {"CNY": 7.1, "EUR": 0.906, "GBP": 0.784, "HKD": 7.81, "SGD": 1.32},
+    }
+    june = {**january, "date": "2024-06-03", "rates": {**january["rates"], "CNY": 7.6}}
+    httpx_mock.add_response(json=june)
+    httpx_mock.add_response(json=january)
+
+    client = _compare_client(monkeypatch, tmp_path)
+    try:
+        response = client.get(
+            "/api/compare",
+            params={
+                "source": "USD",
+                "target": "CNY",
+                "amount": "1000",
+                "on": "2024-01-02",
+                "against": "2024-06-03",
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["baseline"]["rate_date"] == "2024-06-03"
+        assert payload["candidate"]["rate_date"] == "2024-01-02"
+        assert payload["deltas"]["fee_usd"] == "0"
+        assert float(payload["deltas"]["receive"]) < 0
+        assert payload["deltas"]["route_changed"] is False
+        assert any("Only the FX table differs" in caveat for caveat in payload["caveats"])
+    finally:
+        fx_module.activate("frozen")
+
+
+def test_compare_rejects_a_malformed_date(monkeypatch, tmp_path) -> None:
+    client = _compare_client(monkeypatch, tmp_path)
+
+    response = client.get(
+        "/api/compare",
+        params={"source": "USD", "target": "CNY", "amount": "1000", "on": "not-a-date"},
+    )
+
+    assert response.status_code == 400
+    assert "YYYY-MM-DD" in response.json()["detail"]

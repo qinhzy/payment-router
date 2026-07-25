@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
 from helpers import FakeNetwork, make_quote
 
+from payment_router import service
 from payment_router.decision import DecisionProfile
 from payment_router.networks.base import PaymentNetwork
 from payment_router.networks.cips import CIPSNetwork
+from payment_router.router import RoutingPreference
 from payment_router.service import (
     RoutingRequestError,
     build_session,
@@ -112,3 +115,54 @@ def test_build_session_routes_hkd_to_cny_over_cips() -> None:
     assert route.total_time_hours == Decimal("12.0")
     assert route.total_time_min_hours == Decimal("2.0")
     assert route.total_time_max_hours == Decimal("24.0")
+
+
+def test_historical_fx_excludes_live_quoting_networks(monkeypatch) -> None:
+    """A past fixing plus today's live quote would describe a route that never existed."""
+    from payment_router.core import fx as fx_module
+
+    class LiveQuoting(FakeNetwork):
+        def quotes_at_request_time(self) -> bool:
+            return True
+
+    live = LiveQuoting(
+        "Wise",
+        {"USD", "CNY"},
+        {("USD", "CNY"): make_quote("Wise", "5", "1", "7.0")},
+    )
+    scenario = FakeNetwork(
+        "SWIFT",
+        {"USD", "CNY"},
+        {("USD", "CNY"): make_quote("SWIFT", "20", "30", "6.8")},
+    )
+
+    monkeypatch.setattr(
+        fx_module,
+        "_current_status",
+        replace(fx_module.current_status(), mode="historical", rate_date="2024-01-02"),
+    )
+
+    session = asyncio.run(service.build_session("USD", "CNY", "1000", networks=[live, scenario]))
+
+    networks_used = {
+        hop.network_name
+        for hop in session.router.find_all_routes(
+            "USD", "CNY", Decimal("1000"), RoutingPreference(), top_n=5
+        )[0].hops
+    }
+    assert networks_used == {"SWIFT"}
+    excluded = [w for w in session.warnings if "historical run" in w.reason]
+    assert [w.network for w in excluded] == ["Wise"]
+
+
+def test_live_fx_keeps_live_quoting_networks() -> None:
+    live = FakeNetwork(
+        "Wise",
+        {"USD", "CNY"},
+        {("USD", "CNY"): make_quote("Wise", "5", "1", "7.0")},
+    )
+
+    session = asyncio.run(service.build_session("USD", "CNY", "1000", networks=[live]))
+
+    assert session.warnings == ()
+    assert session.router.find_route("USD", "CNY", Decimal("1000"), RoutingPreference()) is not None
