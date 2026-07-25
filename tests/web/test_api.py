@@ -522,3 +522,94 @@ def test_compare_rejects_a_malformed_date(monkeypatch, tmp_path) -> None:
 
     assert response.status_code == 400
     assert "YYYY-MM-DD" in response.json()["detail"]
+
+
+def test_fx_refresh_skips_a_source_fetched_today(monkeypatch) -> None:
+    import asyncio
+    from dataclasses import replace as dc_replace
+
+    from payment_router.core import fx as fx_module
+    from payment_router.web import app as app_module
+
+    today = __import__("datetime").datetime.now(__import__("datetime").UTC).date().isoformat()
+    monkeypatch.setattr(
+        fx_module,
+        "_active_source",
+        dc_replace(fx_module._frozen_source(), mode="live", fetched_on=today),
+    )
+    calls = []
+    monkeypatch.setattr(fx_module, "activate", lambda *a, **k: calls.append(a))
+
+    assert asyncio.run(app_module.refresh_live_fx_once()) is False
+    assert calls == []
+
+
+def test_fx_refresh_refetches_a_source_from_an_earlier_day(monkeypatch) -> None:
+    import asyncio
+    from dataclasses import replace as dc_replace
+
+    from payment_router.core import fx as fx_module
+    from payment_router.web import app as app_module
+
+    monkeypatch.setattr(
+        fx_module,
+        "_active_source",
+        dc_replace(fx_module._frozen_source(), mode="live", fetched_on="2020-01-01"),
+    )
+    calls = []
+    monkeypatch.setattr(fx_module, "activate", lambda *a, **k: calls.append(a))
+
+    assert asyncio.run(app_module.refresh_live_fx_once()) is True
+    assert calls == [("live",)]
+
+
+def test_fx_refresh_never_runs_for_frozen_or_historical_sources(monkeypatch) -> None:
+    """Only a live source can be superseded by a later publication."""
+    import asyncio
+    from dataclasses import replace as dc_replace
+
+    from payment_router.core import fx as fx_module
+    from payment_router.web import app as app_module
+
+    calls = []
+    monkeypatch.setattr(fx_module, "activate", lambda *a, **k: calls.append(a))
+
+    for mode in ("frozen", "historical"):
+        monkeypatch.setattr(
+            fx_module,
+            "_active_source",
+            dc_replace(fx_module._frozen_source(), mode=mode, fetched_on="2020-01-01"),
+        )
+        assert asyncio.run(app_module.refresh_live_fx_once()) is False
+
+    assert calls == []
+
+
+def test_fx_refresh_waits_for_an_in_flight_comparison(monkeypatch) -> None:
+    """The refresher must not swap the source out from under a comparison."""
+    import asyncio
+    from dataclasses import replace as dc_replace
+
+    from payment_router import comparison as comparison_module
+    from payment_router.core import fx as fx_module
+    from payment_router.web import app as app_module
+
+    monkeypatch.setattr(
+        fx_module,
+        "_active_source",
+        dc_replace(fx_module._frozen_source(), mode="live", fetched_on="2020-01-01"),
+    )
+    order: list[str] = []
+    monkeypatch.setattr(fx_module, "activate", lambda *a, **k: order.append("refresh"))
+
+    async def scenario() -> None:
+        async with comparison_module.FX_SWITCH_LOCK:
+            task = asyncio.create_task(app_module.refresh_live_fx_once())
+            await asyncio.sleep(0)
+            order.append("comparison-still-running")
+            await asyncio.sleep(0)
+        await task
+
+    asyncio.run(scenario())
+
+    assert order == ["comparison-still-running", "refresh"]

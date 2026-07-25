@@ -7,6 +7,7 @@ import json
 import time
 from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib.metadata import version as distribution_version
@@ -35,6 +36,14 @@ DISCLAIMER = (
 )
 
 DEFAULT_QUOTE_TTL_SECONDS = 60.0
+DEFAULT_FX_REFRESH_SECONDS = 30 * 60.0
+"""How often a long-running console re-checks the live ECB source.
+
+ECB publishes once per business day, so this only needs to be frequent
+enough to notice a new publication within the working day, not to track a
+market. A refresh is skipped entirely unless the active source is live and
+was fetched before today.
+"""
 
 _CurrencyParam = Annotated[str, Query(min_length=3, max_length=3)]
 _AmountParam = Annotated[str, Query(description="Amount to send, as a decimal string.")]
@@ -147,17 +156,61 @@ class _SessionCache:
                 self._locks.pop(key, None)
 
 
+async def refresh_live_fx_once() -> bool:
+    """Re-fetch the live ECB source when its snapshot predates today.
+
+    Returns whether a refresh was attempted. A failure leaves the existing
+    source active — a stale published fixing is a better answer than none,
+    and the status it already carries discloses the staleness — and the next
+    tick tries again.
+    """
+    async with comparison.FX_SWITCH_LOCK:
+        if fx.snapshot_is_current():
+            return False
+        await asyncio.to_thread(fx.activate, "live")
+        return True
+
+
+async def _fx_refresh_loop(interval_seconds: float) -> None:
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            await refresh_live_fx_once()
+        except Exception:
+            # A refresh is best-effort; never take the console down for it.
+            continue
+
+
 def create_app(
     networks_factory: NetworksFactory = service.default_networks,
     quote_ttl_seconds: float = DEFAULT_QUOTE_TTL_SECONDS,
     explainer_factory: ExplainerFactory = _default_explainer,
+    fx_refresh_seconds: float = DEFAULT_FX_REFRESH_SECONDS,
 ) -> FastAPI:
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        # Only a live source can go out of date: the frozen table has no date
+        # and a historical fixing never changes.
+        refresher = (
+            asyncio.create_task(_fx_refresh_loop(fx_refresh_seconds))
+            if fx_refresh_seconds > 0 and fx.current_status().mode == "live"
+            else None
+        )
+        try:
+            yield
+        finally:
+            if refresher is not None:
+                refresher.cancel()
+                with suppress(asyncio.CancelledError):
+                    await refresher
+
     application = FastAPI(
         title="payment-router console",
         version=distribution_version("payment-router"),
         docs_url="/api/docs",
         openapi_url="/api/openapi.json",
         redoc_url=None,
+        lifespan=lifespan,
     )
     cache = _SessionCache(ttl_seconds=quote_ttl_seconds)
     explainer = explainer_factory()

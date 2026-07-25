@@ -142,6 +142,18 @@ def current_status() -> FxStatus:
     return _current_status
 
 
+def snapshot_is_current() -> bool:
+    """Whether the active live source was fetched today.
+
+    ECB publishes once per business day, so a live source fetched on an
+    earlier day may be superseded. Only meaningful for live mode: the frozen
+    table has no date, and a historical fixing is immutable.
+    """
+    if _active_source.mode != "live":
+        return True
+    return _active_source.fetched_on == datetime.now(UTC).date().isoformat()
+
+
 def generation() -> int:
     """A counter bumped whenever the active source changes.
 
