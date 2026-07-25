@@ -64,6 +64,7 @@ def analyze(
         raise ValueError("steps must be a positive integer")
 
     regions: list[WeightRegion] = []
+    previous_index: int | None = None
     for index in range(steps + 1):
         cost_weight = index / steps
         preference = RoutingPreference(
@@ -74,7 +75,13 @@ def analyze(
         if route is None:
             continue
 
-        if regions and regions[-1].signature == route_signature(route):
+        # Only merge into the previous region when this step directly follows
+        # it. Weights with no route at all break the interval: extending across
+        # that gap would claim the route wins over weights where it does not.
+        contiguous = previous_index is not None and index == previous_index + 1
+        previous_index = index
+
+        if regions and contiguous and regions[-1].signature == route_signature(route):
             regions[-1] = WeightRegion(
                 cost_weight_start=regions[-1].cost_weight_start,
                 cost_weight_end=cost_weight,

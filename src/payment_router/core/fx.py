@@ -87,6 +87,7 @@ def _frozen_source() -> RateSource:
 
 
 _active_source: RateSource = _frozen_source()
+_generation = 0
 _current_status = FxStatus(
     requested_mode="frozen",
     mode="frozen",
@@ -128,13 +129,24 @@ def current_status() -> FxStatus:
     return _current_status
 
 
+def generation() -> int:
+    """A counter bumped whenever the active source changes.
+
+    Callers that derive values from the whole rate table (the router caches
+    per-graph cost and time maxima) can compare this against the generation
+    they computed under and recompute only when the source has switched.
+    """
+    return _generation
+
+
 def configure(source: RateSource) -> None:
     """Install a rate source directly (tests and embedders)."""
-    global _active_source, _current_status
+    global _active_source, _current_status, _generation
     missing = _SUPPORTED_CURRENCIES - set(source.usd_rates)
     if missing:
         raise ValueError(f"rate source is missing currencies: {', '.join(sorted(missing))}")
     _active_source = source
+    _generation += 1
     _current_status = FxStatus(
         requested_mode=source.mode,
         mode=source.mode,
@@ -149,12 +161,13 @@ def configure(source: RateSource) -> None:
 
 def activate(mode: str = "frozen", *, timeout_seconds: float = 10.0) -> FxStatus:
     """Activate a source by mode name; live failures fall back explicitly."""
-    global _active_source, _current_status
+    global _active_source, _current_status, _generation
     if mode not in {"frozen", "live"}:
         raise ValueError(f"unknown FX mode: {mode}")
 
     if mode == "frozen":
         _active_source = _frozen_source()
+        _generation += 1
         _current_status = FxStatus(
             requested_mode="frozen",
             mode="frozen",
@@ -171,6 +184,7 @@ def activate(mode: str = "frozen", *, timeout_seconds: float = 10.0) -> FxStatus
         source = live_source(timeout_seconds=timeout_seconds)
     except FxLiveUnavailableError as error:
         _active_source = _frozen_source()
+        _generation += 1
         _current_status = FxStatus(
             requested_mode="live",
             mode="frozen",
@@ -184,6 +198,7 @@ def activate(mode: str = "frozen", *, timeout_seconds: float = 10.0) -> FxStatus
         return _current_status
 
     _active_source = source
+    _generation += 1
     detail = f"ECB reference rates via Frankfurter, dated {source.rate_date}."
     if source.stale:
         detail += " Refresh failed; serving the cached snapshot."

@@ -10,6 +10,9 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # A routing regression can hang instead of failing; cap it so a stuck job
+    # cannot consume the six-hour default.
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:

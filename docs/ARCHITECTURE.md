@@ -37,6 +37,10 @@ For edge `e`, the normalized score is:
 score(e) = alpha * cost(e) / max_cost + beta * time(e) / max_time
 ```
 
+`max_cost` and `max_time` depend only on the graph and the active rate table,
+never on the preference, so the router caches them per graph and per FX
+generation rather than rescanning every edge on each routing call.
+
 `alpha` and `beta` are normalized from the requested preference. `cost(e)` is
 the USD-normalized fee plus the non-negative loss implied by the edge rate
 relative to the active FX source's mid-rate table — the frozen teaching table
@@ -57,8 +61,15 @@ class when a conversion participates.
 - `max_hops` counts payment edges, not expanded implementation nodes.
 - Same-currency lookup ranks the explicit self-loop edges directly.
 
-The four-currency MVP bounds graph size. A future broad-currency version will
-need additional candidate limits and performance benchmarks.
+Top-N enumeration stops as soon as it collects `top_n` fundable routes, but a
+corridor that never yields that many — because later hops cannot cover their
+fees, or because every candidate exceeds `max_hops` — would otherwise walk the
+generator to exhaustion. That walk grows combinatorially with the corridor set:
+a six-currency graph enumerates roughly 8,000 paths at a rising per-path cost,
+tens of seconds of work. `MAX_CANDIDATE_PATHS` bounds the number of candidates
+inspected. Because candidates arrive in increasing weight order, the bound can
+only return fewer routes than requested; it never reorders or downgrades the
+routes that were found.
 
 ## Timing model and sensitivity
 
@@ -113,6 +124,10 @@ always agree on routing behavior and error messages.
   `/api/sources`, and serving the static single-page console from
   `web/static/`. JSON amounts reuse the exact CLI formatting helpers, so both
   frontends display identical numbers.
+- A preference sweep runs `steps + 1` route selections with no awaits between
+  them, so `/api/sensitivity` runs the analysis in a worker thread instead of
+  inline. The router and its graph are read-only during the sweep, and the
+  event loop stays free to serve other requests.
 - The web app keeps a short-lived cache of built routing sessions (default
   60 seconds, keyed by source, target, and amount) so switching preference or
   top-N reuses the same quotes instead of re-querying live providers. Only

@@ -308,3 +308,81 @@ def test_sensitivity_returns_404_when_no_route_exists() -> None:
     )
 
     assert response.status_code == 404
+
+
+def test_sensitivity_runs_off_the_event_loop(monkeypatch) -> None:
+    """The sweep is CPU-bound; it must not block the serving event loop.
+
+    The endpoint body and the sweep must therefore run on different threads.
+    Comparing them (rather than checking for the main thread) is what makes
+    this fail when the sweep is called inline.
+    """
+    import threading
+
+    from payment_router import sensitivity as sensitivity_module
+    from payment_router.web import app as app_module
+    from payment_router.web import schemas as schemas_module
+
+    recorded: dict[str, str] = {}
+    analyze = sensitivity_module.analyze
+    to_json = schemas_module.sensitivity_to_json
+
+    def recording_analyze(*args, **kwargs):
+        recorded["sweep"] = threading.current_thread().name
+        return analyze(*args, **kwargs)
+
+    def recording_to_json(*args, **kwargs):
+        # Runs inline in the endpoint, i.e. on the event-loop thread.
+        recorded["endpoint"] = threading.current_thread().name
+        return to_json(*args, **kwargs)
+
+    monkeypatch.setattr(app_module.sensitivity, "analyze", recording_analyze)
+    monkeypatch.setattr(app_module.schemas, "sensitivity_to_json", recording_to_json)
+
+    response = _client().get(
+        "/api/sensitivity",
+        params={"source": "USD", "target": "CNY", "amount": "1000", "steps": 10},
+    )
+
+    assert response.status_code == 200
+    assert recorded["sweep"] != recorded["endpoint"]
+
+
+def test_equivalent_amount_spellings_share_one_cached_session() -> None:
+    factory = _CountingFactory()
+    client = _client(factory)
+    baseline = factory.calls
+
+    for amount in ("1000", "1000.0", "1000.00"):
+        response = client.get(
+            "/api/route",
+            params={"source": "USD", "target": "CNY", "amount": amount},
+        )
+        assert response.status_code == 200
+
+    assert factory.calls - baseline == 1
+
+
+def test_meta_reports_the_fx_source_at_request_time() -> None:
+    """The FX disclosure is process state, not a startup snapshot."""
+    from payment_router.core import fx as fx_module
+
+    client = _client()
+    assert client.get("/api/meta").json()["fx"]["mode"] == "frozen"
+
+    try:
+        fx_module.configure(
+            fx_module.RateSource(
+                mode="live",
+                label="ECB reference rates (Frankfurter)",
+                classification=DataSource.VERIFIED,
+                usd_rates=dict(fx_module._FROZEN_RATES_TO_USD),
+                rate_date="2026-07-24",
+            )
+        )
+        payload = client.get("/api/meta").json()["fx"]
+        assert payload["mode"] == "live"
+        assert payload["rate_date"] == "2026-07-24"
+        assert payload["classification"] == "VERIFIED"
+    finally:
+        fx_module.activate("frozen")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from asyncio import Lock
@@ -167,9 +168,10 @@ def create_app(
         amount: str,
     ) -> tuple[service.RoutingSession, dict[str, object]]:
         try:
-            # Validate up front so equivalent spellings ("100", "100.0") share
-            # one cache key and invalid amounts never reach the cache.
-            canonical_amount = service.parse_amount(amount)
+            # Validate up front so invalid amounts never reach the cache, and
+            # normalize the scale so equivalent spellings ("100", "100.0",
+            # "100.00") share one key instead of re-quoting every provider.
+            canonical_amount = service.parse_amount(amount).normalize()
             key = (source.strip().upper(), target.strip().upper(), str(canonical_amount))
             entry, from_cache = await cache.get(
                 key,
@@ -199,10 +201,9 @@ def create_app(
             ),
         )
 
-    # Neither payload can change over the app's lifetime; build them once.
+    # The network roster cannot change over the app's lifetime; build it once.
     networks_snapshot = networks_factory()
-    fx_status = fx.current_status()
-    meta_payload: dict[str, object] = {
+    static_meta: dict[str, object] = {
         "version": application.version,
         "disclaimer": DISCLAIMER,
         "currencies": sorted(service.supported_currencies(networks_snapshot)),
@@ -214,16 +215,6 @@ def create_app(
             for network in networks_snapshot
         ],
         "profiles": [profile.value for profile in DecisionProfile],
-        "fx": {
-            "mode": fx_status.mode,
-            "requested_mode": fx_status.requested_mode,
-            "label": fx_status.label,
-            "classification": fx_status.classification.value,
-            "rate_date": fx_status.rate_date,
-            "stale": fx_status.stale,
-            "fallback": fx_status.fallback,
-            "detail": fx_status.detail,
-        },
         "ai": {
             "enabled": explainer is not None,
             "model": explainer.model if explainer is not None else None,
@@ -235,7 +226,23 @@ def create_app(
 
     @application.get("/api/meta")
     async def meta() -> dict[str, object]:
-        return meta_payload
+        # The FX block is read per request, not snapshotted: the active source
+        # is process state that a re-activation can change, and a disclosure
+        # the console shows must not be able to drift from what routing uses.
+        fx_status = fx.current_status()
+        return {
+            **static_meta,
+            "fx": {
+                "mode": fx_status.mode,
+                "requested_mode": fx_status.requested_mode,
+                "label": fx_status.label,
+                "classification": fx_status.classification.value,
+                "rate_date": fx_status.rate_date,
+                "stale": fx_status.stale,
+                "fallback": fx_status.fallback,
+                "detail": fx_status.detail,
+            },
+        }
 
     @application.get("/api/route")
     async def route(
@@ -314,7 +321,12 @@ def create_app(
         steps: Annotated[int, Query(ge=10, le=400)] = 100,
     ) -> dict[str, object]:
         session, quotes_meta = await build_session(source, target, amount)
-        report = sensitivity.analyze(
+        # A sweep runs `steps + 1` full route selections back to back. That is
+        # CPU-bound work with no awaits, so running it inline would stall every
+        # other request on the event loop for the whole sweep. The router and
+        # its graph are read-only here, which makes the offload safe.
+        report = await asyncio.to_thread(
+            sensitivity.analyze,
             session.router,
             session.source_currency,
             session.target_currency,

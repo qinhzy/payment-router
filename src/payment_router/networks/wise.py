@@ -33,6 +33,43 @@ ENGLISH_HEADERS = {
     "Accept-Language": "en",
 }
 
+_MONTH_NAMES = (
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+)
+# The request pins Accept-Language: en, so delivery labels are English no
+# matter what locale the host runs under. `datetime.strptime` reads %A and %B
+# from LC_TIME, so it would reject those same English labels on a machine
+# configured for another language. Match them explicitly instead.
+MONTH_NUMBERS = {
+    **{name: number for number, name in enumerate(_MONTH_NAMES, start=1)},
+    **{name[:3]: number for number, name in enumerate(_MONTH_NAMES, start=1)},
+    "sept": 9,
+}
+WEEKDAY_NUMBERS = {
+    "monday": 0,
+    "tuesday": 1,
+    "wednesday": 2,
+    "thursday": 3,
+    "friday": 4,
+    "saturday": 5,
+    "sunday": 6,
+}
+# "Friday, July 24", "July 24", "Jul 24", "Jul. 24"
+_MONTH_DAY_LABEL = re.compile(
+    r"\A(?:(?P<weekday>[a-z]+),\s*)?(?P<month>[a-z]+)\.?\s+(?P<day>\d{1,2})\Z"
+)
+
 
 class WiseAPIError(RuntimeError):
     """Raised when the Wise quote API cannot provide a reliable quote."""
@@ -260,42 +297,38 @@ class WiseNetwork(PaymentNetwork):
         raise ValueError(f"Unsupported formattedEstimatedDelivery value: {formatted_delivery}")
 
     @staticmethod
-    def _parse_by_day_label(label: str, created_time: datetime) -> datetime:
-        created_utc = created_time.astimezone(UTC)
+    def _next_occurrence(month: int, day: int, after: datetime) -> datetime:
+        """The first end-of-day `month`/`day` at or after `after`.
 
-        for date_format in ("%A, %B %d", "%A, %b %d", "%B %d", "%b %d"):
+        Scans forward year by year because 29 February exists only in leap
+        years; picking a nearby valid day instead would report a date the
+        label never named.
+        """
+        for year in range(after.year, after.year + 9):
             try:
-                parsed = datetime.strptime(label, date_format)
+                candidate = datetime(year, month, day, 23, 59, 59, tzinfo=UTC)
             except ValueError:
-                continue
+                continue  # 29 February in a common year
+            if candidate >= after:
+                return candidate
+        raise ValueError(f"Unsupported date label: month {month} day {day}")
 
-            candidate = datetime(
-                year=created_utc.year,
-                month=parsed.month,
-                day=parsed.day,
-                hour=23,
-                minute=59,
-                second=59,
-                tzinfo=UTC,
-            )
-            if candidate < created_utc:
-                candidate = candidate.replace(year=candidate.year + 1)
-            return candidate
+    @classmethod
+    def _parse_by_day_label(cls, label: str, created_time: datetime) -> datetime:
+        created_utc = created_time.astimezone(UTC)
+        normalized = label.strip().lower()
 
-        weekdays = {
-            "monday": 0,
-            "tuesday": 1,
-            "wednesday": 2,
-            "thursday": 3,
-            "friday": 4,
-            "saturday": 5,
-            "sunday": 6,
-        }
-        weekday_name = label.strip().lower()
-        if weekday_name not in weekdays:
+        match = _MONTH_DAY_LABEL.match(normalized)
+        if match is not None:
+            month = MONTH_NUMBERS.get(match.group("month"))
+            if month is None:
+                raise ValueError(f"Unsupported date label: {label}")
+            return cls._next_occurrence(month, int(match.group("day")), created_utc)
+
+        if normalized not in WEEKDAY_NUMBERS:
             raise ValueError(f"Unsupported date label: {label}")
 
-        days_ahead = (weekdays[weekday_name] - created_utc.weekday()) % 7
+        days_ahead = (WEEKDAY_NUMBERS[normalized] - created_utc.weekday()) % 7
         candidate_date = (created_utc + timedelta(days=days_ahead)).date()
         return datetime(
             year=candidate_date.year,

@@ -3,6 +3,57 @@
 All notable user-visible changes are recorded here. The project follows
 [Semantic Versioning](https://semver.org/) while it approaches a stable API.
 
+## [0.5.1] - Unreleased
+
+### Fixed
+
+- bounded top-N candidate enumeration. A corridor that could not yield
+  `top_n` fundable routes previously walked every simple path in the
+  expanded graph, which grows combinatorially with the corridor set: a
+  six-currency graph took roughly 27 seconds and an eight-currency graph did
+  not finish. `MAX_CANDIDATE_PATHS` now caps the candidates inspected, so the
+  same searches complete in about 0.25 s and 0.36 s. Candidates are generated
+  in increasing weight order, so the cap can only return fewer routes than
+  requested — it never reorders or downgrades the routes that were found, and
+  healthy corridors are unaffected.
+- Wise delivery labels are parsed without depending on the host locale.
+  `datetime.strptime` reads `%A`/`%B` from `LC_TIME`, so a machine configured
+  for another language rejected the English labels the request explicitly asks
+  for (`Accept-Language: en`) and dropped every affected quote with a provider
+  warning. Month and weekday names are now matched against explicit English
+  tables.
+- Wise delivery labels naming 29 February are parsed instead of rejected.
+  `strptime` defaults to year 1900, which is not a leap year, so the label
+  failed to parse at all during any leap year. Dates now resolve to the next
+  real occurrence of the named month and day, so a leap day is never quietly
+  reported as 28 February.
+- sensitivity regions no longer merge across a weight that produced no route.
+  A gap used to be absorbed into the surrounding interval, which claimed a
+  route won over weights where it did not.
+- the console ignores superseded requests. Buttons disable themselves while a
+  request is open, but history navigation does not go through them, so holding
+  the back button could let a slow earlier response overwrite a newer view and
+  rewrite the address bar to match it. In-flight requests are now aborted and
+  late responses discarded.
+
+### Changed
+
+- `/api/sensitivity` runs its weight sweep in a worker thread. The sweep is
+  `steps + 1` back-to-back route selections with no awaits, so running it
+  inline stalled every other request on the event loop for its duration.
+- the router caches the cost and time maxima used for score normalization.
+  They depend only on the graph and the active FX source, never on the
+  preference, so a sweep rescanned every edge once per step. The cache is
+  invalidated by a graph rebuild or an FX source switch (`fx.generation()`).
+  A 200-step sweep saves about 5% at today's four-currency graph and about
+  50% at the 120-280 edge sizes a wider corridor set would reach.
+- the web session cache normalizes the amount's scale, so `1000`, `1000.0`,
+  and `1000.00` share one entry instead of re-quoting every provider.
+- `/api/meta` reads the FX disclosure per request rather than snapshotting it
+  at startup, so the console can never show a source the router is not using.
+- the CLI's sensitivity stability panel names the winning route and its
+  networks, matching what the web console already showed.
+
 ## [0.5.0] - Unreleased
 
 ### Added

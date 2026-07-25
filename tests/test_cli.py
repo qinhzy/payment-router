@@ -115,7 +115,7 @@ def test_version_option_prints_project_version() -> None:
     result = runner.invoke(app, ["--version"])
 
     assert result.exit_code == 0
-    assert "0.5.0" in result.output
+    assert "0.5.1" in result.output
 
 
 def test_sources_command_lists_verified_and_estimated_evidence() -> None:
@@ -147,3 +147,15 @@ def test_sensitivity_command_outputs_sweep_and_stability(monkeypatch) -> None:
     assert "Preference sweep" in result.output
     assert "Stability" in result.output
     assert "0.00" in result.output
+
+
+def test_sensitivity_stability_panel_names_the_winning_route(monkeypatch) -> None:
+    monkeypatch.setattr("payment_router.cli._instantiate_networks", _stub_networks)
+
+    result = runner.invoke(app, ["sensitivity", "USD", "CNY", "100", "--steps", "10"])
+
+    assert result.exit_code == 0
+    output = " ".join(result.output.split())
+    assert "The balanced (0.50) choice" in output
+    assert "via" in output
+    assert "USD" in output and "CNY" in output

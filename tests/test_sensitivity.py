@@ -6,9 +6,10 @@ from decimal import Decimal
 import pytest
 from helpers import FakeNetwork, make_quote
 
+from payment_router import sensitivity
 from payment_router.core import fx
 from payment_router.core.graph import PaymentGraph
-from payment_router.core.models import DataSource, NetworkQuote
+from payment_router.core.models import DataSource, Hop, NetworkQuote, Route
 from payment_router.networks.sepa import SEPANetwork
 from payment_router.networks.swift import SWIFTNetwork
 from payment_router.router import PaymentRouter
@@ -185,3 +186,50 @@ def test_route_totals_aggregate_hop_bounds() -> None:
     assert route is not None
     assert route.total_time_min_hours == Decimal("4")
     assert route.total_time_max_hours == Decimal("20")
+
+
+def test_regions_do_not_merge_across_a_weight_with_no_route() -> None:
+    """A gap in the sweep must break the interval, not be absorbed into it."""
+
+    class GappyRouter:
+        """Routes at every weight except the middle of the axis."""
+
+        def __init__(self, route: Route) -> None:
+            self._route = route
+
+        def find_route(self, source, target, amount, preference):
+            return None if 0.4 < preference.alpha < 0.6 else self._route
+
+    route = Route(
+        hops=[
+            Hop(
+                from_node="USD",
+                to_node="CNY",
+                network_name="OnlyRail",
+                fee_usd=Decimal("5"),
+                time_hours=Decimal("10"),
+                currency_in="USD",
+                currency_out="CNY",
+                fx_rate=Decimal("7"),
+                data_source=DataSource.ESTIMATED,
+            )
+        ],
+        total_fee_usd=Decimal("5"),
+        total_time_hours=Decimal("10"),
+        source_currency="USD",
+        target_currency="CNY",
+        source_amount=Decimal("1000"),
+        final_amount=Decimal("6965"),
+    )
+
+    report = sensitivity.analyze(
+        GappyRouter(route),
+        "USD",
+        "CNY",
+        Decimal("1000"),
+        steps=10,
+    )
+
+    assert len(report.regions) == 2
+    assert report.regions[0].cost_weight_end < 0.5 < report.regions[1].cost_weight_start
+    assert report.balanced_region is None
