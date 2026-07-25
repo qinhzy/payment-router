@@ -52,6 +52,21 @@ PROVENANCE_RECORDS = (
         ),
     ),
     ProvenanceRecord(
+        evidence_id="fx-historical-ecb",
+        network="Shared FX",
+        metric="USD normalization rates for a past date (remit compare)",
+        classification=DataSource.VERIFIED,
+        value="ECB euro reference rates as published for the requested date",
+        checked_on="2026-07-25",
+        reference="https://www.frankfurter.dev/",
+        caveat=(
+            "The fixing is the rate ECB published that day, not a rate anyone "
+            "was quoted or traded at. ECB publishes on business days only, so "
+            "a weekend or holiday request resolves to the preceding "
+            "publication and both dates are disclosed."
+        ),
+    ),
+    ProvenanceRecord(
         evidence_id="sepa-sct-time",
         network="SEPA",
         metric="maximum execution time",

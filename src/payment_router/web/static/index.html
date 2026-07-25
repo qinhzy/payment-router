@@ -116,6 +116,17 @@
             <button class="button button-ghost" id="decide-button" type="button">Compare profiles</button>
             <button class="button button-ghost" id="sensitivity-button" type="button">Sensitivity</button>
           </div>
+
+          <div class="control-row control-history">
+            <label class="field-label" for="on-date">Rate date</label>
+            <input type="date" id="on-date" class="date-input" aria-label="Historical rate date" />
+            <button class="button button-ghost" id="compare-button" type="button">
+              Compare with today
+            </button>
+            <span class="hint" id="compare-hint">
+              Prices the same corridor at a past ECB fixing.
+            </span>
+          </div>
         </form>
         <div class="recents" id="recents" hidden></div>
       </section>

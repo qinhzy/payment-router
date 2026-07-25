@@ -18,7 +18,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from payment_router import sensitivity, service
+from payment_router import comparison, sensitivity, service
 from payment_router.core import fx
 from payment_router.decision import DecisionProfile, build_decision_board, summarize_tradeoff
 from payment_router.networks.base import PaymentNetwork
@@ -66,7 +66,7 @@ def _default_explainer() -> Explainer | None:
 
 
 class ExplainRequest(BaseModel):
-    kind: Literal["route", "decide", "sensitivity"]
+    kind: Literal["route", "decide", "sensitivity", "compare"]
     data: dict[str, object]
     lang: str = Field(default="en", max_length=35)
 
@@ -346,6 +346,49 @@ def create_app(
             **schemas.sensitivity_to_json(report),
             "warnings": [schemas.warning_to_json(warning) for warning in session.warnings],
         }
+
+    @application.get("/api/compare")
+    async def compare(
+        source: _CurrencyParam,
+        target: _CurrencyParam,
+        amount: _AmountParam,
+        on: Annotated[str, Query(description="Rate date to price at (YYYY-MM-DD).")],
+        against: Annotated[str | None, Query(description="Baseline rate date.")] = None,
+        profile: DecisionProfile = DecisionProfile.BALANCED,
+    ) -> dict[str, object]:
+        # This switches the process-wide FX source while it runs, so it does
+        # not share the session cache: those entries were built under whatever
+        # source was active at the time and are not comparable across dates.
+        try:
+            report = await comparison.compare_dates(
+                source,
+                target,
+                amount,
+                networks_factory,
+                on_date=on,
+                against_date=against,
+                profile=profile,
+            )
+        except service.RoutingRequestError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from None
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from None
+        except fx.FxLiveUnavailableError as error:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Historical rates unavailable: {error}",
+            ) from None
+
+        if report.baseline.route is None or report.candidate.route is None:
+            raise HTTPException(
+                status_code=404,
+                detail=service.no_route_message(
+                    report.source_currency,
+                    report.target_currency,
+                    report.amount,
+                ),
+            )
+        return schemas.comparison_to_json(report)
 
     @application.post("/api/explain")
     async def explain(request: ExplainRequest) -> StreamingResponse:

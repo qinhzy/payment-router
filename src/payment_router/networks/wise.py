@@ -159,6 +159,11 @@ class WiseNetwork(PaymentNetwork):
     def supported_currencies(self) -> set[str]:
         return set(fx.supported_currencies())
 
+    def quotes_at_request_time(self) -> bool:
+        # The guest quote API answers for right now; there is no historical
+        # quote endpoint, so this adapter cannot be replayed against a past date.
+        return True
+
     @staticmethod
     def _safe_error_text(response: httpx.Response) -> str:
         text = response.text.strip()

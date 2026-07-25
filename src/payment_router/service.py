@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
+from payment_router.core import fx
 from payment_router.core.graph import PaymentGraph
 from payment_router.core.models import Route
 from payment_router.decision import DecisionProfile
@@ -59,6 +60,36 @@ def default_networks() -> list[PaymentNetwork]:
 
 def network_display_name(network: PaymentNetwork) -> str:
     return network.display_name()
+
+
+def networks_for_active_fx(
+    networks: list[PaymentNetwork],
+) -> tuple[list[PaymentNetwork], tuple[BuildWarning, ...]]:
+    """Drop adapters that cannot answer for the active rate date.
+
+    Under a historical fixing a live-quoting adapter would contribute today's
+    fee and delivery estimate to a route priced at a past rate, describing a
+    corridor that never existed. Excluding it is disclosed as a warning rather
+    than done silently, because a missing provider changes which route wins.
+    """
+    if fx.current_status().mode != "historical":
+        return networks, ()
+
+    eligible = [network for network in networks if not network.quotes_at_request_time()]
+    excluded = tuple(
+        BuildWarning(
+            network=network_display_name(network),
+            from_currency="*",
+            to_currency="*",
+            reason=(
+                "excluded from a historical run: this provider quotes at request "
+                "time and has no rate for a past date"
+            ),
+        )
+        for network in networks
+        if network.quotes_at_request_time()
+    )
+    return eligible, excluded
 
 
 def supported_currencies(networks: list[PaymentNetwork]) -> set[str]:
@@ -127,6 +158,7 @@ async def build_session(
     target_currency = to_currency.strip().upper()
     amount = parse_amount(raw_amount)
 
+    networks, excluded_warnings = networks_for_active_fx(networks)
     supported = supported_currencies(networks)
     unsupported = [
         currency for currency in (source_currency, target_currency) if currency not in supported
@@ -145,7 +177,7 @@ async def build_session(
         amount_currency=source_currency,
     )
     await graph.build()
-    warnings = tuple(
+    warnings = excluded_warnings + tuple(
         BuildWarning(
             network=network_name,
             from_currency=warning_from,

@@ -11,6 +11,7 @@ separators or currency symbols here would silently break the console.
 
 from __future__ import annotations
 
+from payment_router.comparison import ComparisonReport, ComparisonSide
 from payment_router.core.models import DataSource, Hop, Route
 from payment_router.decision import DecisionTradeoff, RouteDecision
 from payment_router.provenance import ProvenanceRecord
@@ -113,4 +114,44 @@ def provenance_to_json(record: ProvenanceRecord) -> dict[str, object]:
         "checked_on": record.checked_on,
         "reference": record.reference,
         "caveat": record.caveat,
+    }
+
+
+def comparison_side_to_json(side: ComparisonSide) -> dict[str, object]:
+    return {
+        "label": side.label,
+        "mode": side.mode,
+        "rate_date": side.rate_date,
+        "requested_date": side.requested_date,
+        "resolved_to_earlier_publication": (
+            side.requested_date is not None and side.rate_date != side.requested_date
+        ),
+        "detail": side.detail,
+        "mid_rate": str(side.mid_rate) if side.mid_rate is not None else None,
+        "route": route_to_json(side.route) if side.route is not None else None,
+        "warnings": [warning_to_json(warning) for warning in side.warnings],
+    }
+
+
+def comparison_to_json(report: ComparisonReport) -> dict[str, object]:
+    def optional(value) -> str | None:
+        return str(value) if value is not None else None
+
+    return {
+        "request": {
+            "source": report.source_currency,
+            "target": report.target_currency,
+            "amount": str(report.amount),
+            "profile": report.profile.value,
+        },
+        "baseline": comparison_side_to_json(report.baseline),
+        "candidate": comparison_side_to_json(report.candidate),
+        "deltas": {
+            "mid_rate": optional(report.mid_rate_delta),
+            "fee_usd": optional(report.fee_delta_usd),
+            "receive": optional(report.receive_delta),
+            "time_hours": optional(report.time_delta_hours),
+            "route_changed": report.route_changed,
+        },
+        "caveats": list(report.caveats),
     }

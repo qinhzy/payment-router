@@ -3,6 +3,37 @@
 All notable user-visible changes are recorded here. The project follows
 [Semantic Versioning](https://semver.org/) while it approaches a stable API.
 
+## [0.7.0] - Unreleased
+
+### Added
+
+- historical ECB rate dates. `--fx`-style sourcing gains a third mode that
+  fetches the fixing published for a named past date, classified `VERIFIED`.
+  A past fixing never changes, so its snapshot is cached per date and reused
+  without revalidation. ECB publishes on business days only, so a weekend or
+  holiday request resolves to the preceding publication and both the
+  requested and the returned date are disclosed;
+- `remit compare SOURCE TARGET AMOUNT --on <date> [--against <date>]` and
+  `GET /api/compare`: route one corridor under two rate dates and report the
+  mid-rate, fee, timing, and recipient-amount deltas between them. The
+  baseline defaults to the latest published fixing;
+- a console **rate-date comparison** view with a date picker, side-by-side
+  cards, the deltas, and the caveats, deep-linkable via `view=compare&on=`;
+- `fx-historical-ecb` provenance record and registry entry.
+
+### Changed
+
+- payment networks declare whether they quote at request time. A live-quoting
+  adapter cannot answer for a past date, so it is excluded from a historical
+  run — and from the baseline of a comparison as well, so that both sides see
+  the same providers. Leaving it on one side only would let a provider-set
+  difference appear in the deltas as though it were a rate effect. The
+  exclusion is disclosed rather than silent.
+- a historical rate request has no fallback. Live mode degrades to the frozen
+  teaching table when the network is unavailable, but the frozen table is not
+  the rate that applied on a past date, so an unavailable fixing raises
+  instead of substituting one.
+
 ## [0.6.0] - Unreleased
 
 ### Added

@@ -130,7 +130,7 @@ def test_version_option_prints_project_version() -> None:
     result = runner.invoke(app, ["--version"])
 
     assert result.exit_code == 0
-    assert "0.6.0" in result.output
+    assert "0.7.0" in result.output
 
 
 def test_sources_command_lists_verified_and_estimated_evidence() -> None:
@@ -186,3 +186,10 @@ def test_route_command_supports_hkd_to_cny_cips_corridor(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "CIPS" in result.output
     assert "Time range" in result.output
+
+
+def test_compare_command_rejects_a_malformed_date() -> None:
+    result = runner.invoke(app, ["compare", "USD", "CNY", "1000", "--on", "nope"])
+
+    assert result.exit_code != 0
+    assert "YYYY-MM-DD" in result.output
