@@ -3,7 +3,11 @@
 All notable user-visible changes are recorded here. The project follows
 [Semantic Versioning](https://semver.org/) while it approaches a stable API.
 
-## [0.7.0] - Unreleased
+`0.7.0` is the first tagged release. Versions `0.2.0` through `0.6.0` were
+developed in the open but never tagged, so their entries are kept below for
+history and everything they describe ships in `0.7.0`.
+
+## [0.7.0] - 2026-07-25
 
 ### Added
 
@@ -19,7 +23,13 @@ All notable user-visible changes are recorded here. The project follows
   baseline defaults to the latest published fixing;
 - a console **rate-date comparison** view with a date picker, side-by-side
   cards, the deltas, and the caveats, deep-linkable via `view=compare&on=`;
-- `fx-historical-ecb` provenance record and registry entry.
+- `fx-historical-ecb` provenance record and registry entry;
+- periodic live-rate refresh while serving. A long-running
+  `remit serve --fx live` re-checks the ECB source on an interval (default
+  30 minutes, `--fx-refresh-minutes 0` disables it) and re-fetches only when
+  the active snapshot predates today, so the console stops reporting a rate
+  date it has outgrown. A failed refresh keeps the existing source and retries
+  on the next tick.
 
 ### Changed
 
@@ -29,6 +39,10 @@ All notable user-visible changes are recorded here. The project follows
   the same providers. Leaving it on one side only would let a provider-set
   difference appear in the deltas as though it were a rate effect. The
   exclusion is disclosed rather than silent.
+- switching the process-wide FX source is serialized. A comparison swaps the
+  active source twice and restores it, so the refresh loop takes the same lock
+  and cannot substitute rates underneath an in-flight comparison. The blocking
+  rate fetches also moved off the event loop.
 - a historical rate request has no fallback. Live mode degrades to the frozen
   teaching table when the network is unavailable, but the frozen table is not
   the rate that applied on a past date, so an unavailable fixing raises

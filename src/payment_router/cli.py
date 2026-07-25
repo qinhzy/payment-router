@@ -55,7 +55,7 @@ _FX_OPTION = typer.Option(
 )
 
 
-def _activate_fx(fx_mode: FxMode | None) -> None:
+def _activate_fx(fx_mode: FxMode | None) -> fx.FxStatus | None:
     requested = (
         fx_mode.value
         if fx_mode is not None
@@ -73,6 +73,7 @@ def _activate_fx(fx_mode: FxMode | None) -> None:
         if status.stale:
             line += " · cached snapshot (refresh failed)"
         console.print(line, style="dim")
+    return status
 
 
 def _read_version() -> str:
@@ -424,9 +425,20 @@ def serve_command(
         typer.Option("--open/--no-open", help="Open the console in a browser after starting."),
     ] = False,
     fx_mode: Annotated[FxMode | None, _FX_OPTION] = None,
+    fx_refresh_minutes: Annotated[
+        float,
+        typer.Option(
+            "--fx-refresh-minutes",
+            min=0,
+            help=(
+                "How often to re-check live ECB rates while serving. "
+                "0 disables refreshing. Ignored unless --fx live is active."
+            ),
+        ),
+    ] = 30.0,
 ) -> None:
     """Launch the local web console (requires the 'web' extra)."""
-    _activate_fx(fx_mode)
+    status = _activate_fx(fx_mode)
     try:
         import uvicorn
 
@@ -446,7 +458,14 @@ def serve_command(
         import webbrowser
 
         threading.Timer(1.0, webbrowser.open, args=[url]).start()
-    uvicorn.run(create_app(), host=host, port=port, log_level="info")
+    if status is not None and status.mode == "live" and fx_refresh_minutes > 0:
+        console.print(f"Re-checking ECB rates every {fx_refresh_minutes:g} min", style="dim")
+    uvicorn.run(
+        create_app(fx_refresh_seconds=fx_refresh_minutes * 60.0),
+        host=host,
+        port=port,
+        log_level="info",
+    )
 
 
 def _instantiate_networks() -> list[PaymentNetwork]:

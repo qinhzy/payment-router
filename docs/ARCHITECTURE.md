@@ -121,6 +121,20 @@ timing bands that are scenario values. Caveats stay qualitative because the
 registry has no evidence for a numeric later-hop correction; inventing one
 would violate the provenance contract.
 
+## FX source lifecycle
+
+The active rate table is process state. Two things mutate it after startup: a
+comparison, which swaps it twice and restores it, and the console's refresh
+loop, which re-fetches the live source when its snapshot predates today. Both
+take `comparison.FX_SWITCH_LOCK`, so a refresh cannot land between a
+comparison's two sides and price them against different tables. Rate fetches
+are synchronous HTTP, so async callers run them in a worker thread.
+
+The refresh only applies to live mode: the frozen table has no date and a
+historical fixing is immutable. A failed refresh keeps the current source
+rather than degrading it, and `/api/meta` reads the status per request, so the
+console's disclosed rate date always matches what routing is using.
+
 ## Historical comparison
 
 `comparison.py` prices one corridor under two ECB rate dates. Only the FX

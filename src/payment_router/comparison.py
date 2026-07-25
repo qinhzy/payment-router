@@ -15,6 +15,7 @@ The simulator has no evidence for the latter and does not claim it.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -28,6 +29,24 @@ from payment_router.service import (
     parse_amount,
     select_route_for_profile,
 )
+
+FX_SWITCH_LOCK = asyncio.Lock()
+"""Serializes work that swaps the process-wide FX source.
+
+The active rate table is module state, so a comparison (which switches it
+twice and restores it) and the console's periodic refresh would otherwise
+interleave and route one side against the other's rates. Anything that calls
+:func:`payment_router.core.fx.activate` from async code must hold this.
+"""
+
+
+async def _activate(mode: str, **kwargs) -> fx.FxStatus:
+    """Switch the FX source without blocking the event loop.
+
+    ``fx.activate`` may perform a synchronous HTTP fetch, so it belongs in a
+    worker thread whenever it is reached from async code.
+    """
+    return await asyncio.to_thread(lambda: fx.activate(mode, **kwargs))
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,11 +181,36 @@ async def compare_dates(
     # in the deltas.
     eligible_factory, excluded_networks = _comparable_networks(networks_factory)
 
+    async with FX_SWITCH_LOCK:
+        return await _compare_under_lock(
+            source_currency,
+            target_currency,
+            raw_amount,
+            eligible_factory,
+            excluded_networks,
+            on_date,
+            against_date,
+            profile,
+            timeout_seconds,
+        )
+
+
+async def _compare_under_lock(
+    source_currency: str,
+    target_currency: str,
+    raw_amount: str,
+    eligible_factory,
+    excluded_networks: tuple[str, ...],
+    on_date: str,
+    against_date: str | None,
+    profile: DecisionProfile,
+    timeout_seconds: float,
+) -> ComparisonReport:
     previous_status = fx.current_status()
 
     try:
         if against_date is None:
-            baseline_status = fx.activate("live", timeout_seconds=timeout_seconds)
+            baseline_status = await _activate("live", timeout_seconds=timeout_seconds)
             if baseline_status.fallback:
                 raise RoutingRequestError(
                     "A comparison baseline needs published rates, but live rates "
@@ -174,7 +218,7 @@ async def compare_dates(
                 )
             baseline_label = "latest"
         else:
-            fx.activate("historical", on_date=against_date, timeout_seconds=timeout_seconds)
+            await _activate("historical", on_date=against_date, timeout_seconds=timeout_seconds)
             baseline_label = against_date
         baseline = await _run_side(
             baseline_label,
@@ -185,7 +229,7 @@ async def compare_dates(
             profile,
         )
 
-        fx.activate("historical", on_date=on_date, timeout_seconds=timeout_seconds)
+        await _activate("historical", on_date=on_date, timeout_seconds=timeout_seconds)
         candidate = await _run_side(
             on_date,
             source_currency,
@@ -195,7 +239,7 @@ async def compare_dates(
             profile,
         )
     finally:
-        _restore(previous_status, timeout_seconds)
+        await _restore(previous_status, timeout_seconds)
 
     return ComparisonReport(
         source_currency=source_currency.strip().upper(),
@@ -224,13 +268,15 @@ def _comparable_networks(networks_factory):
     return factory, excluded
 
 
-def _restore(status: fx.FxStatus, timeout_seconds: float) -> None:
+async def _restore(status: fx.FxStatus, timeout_seconds: float) -> None:
     if status.mode == "historical" and status.requested_date is not None:
-        fx.activate("historical", on_date=status.requested_date, timeout_seconds=timeout_seconds)
+        await _activate(
+            "historical", on_date=status.requested_date, timeout_seconds=timeout_seconds
+        )
     elif status.mode == "live":
-        fx.activate("live", timeout_seconds=timeout_seconds)
+        await _activate("live", timeout_seconds=timeout_seconds)
     else:
-        fx.activate("frozen")
+        await _activate("frozen")
 
 
 def _caveats_for(
