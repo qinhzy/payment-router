@@ -138,8 +138,11 @@ def test_historical_fx_excludes_live_quoting_networks(monkeypatch) -> None:
 
     monkeypatch.setattr(
         fx_module,
-        "_current_status",
-        replace(fx_module.current_status(), mode="historical", rate_date="2024-01-02"),
+        "_state",
+        replace(
+            fx_module._state,
+            status=replace(fx_module.current_status(), mode="historical", rate_date="2024-01-02"),
+        ),
     )
 
     session = asyncio.run(service.build_session("USD", "CNY", "1000", networks=[live, scenario]))

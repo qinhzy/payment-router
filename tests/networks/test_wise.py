@@ -420,3 +420,45 @@ def test_delivery_label_rejects_a_non_english_month() -> None:
 
     with pytest.raises(ValueError, match="Unsupported date label"):
         WiseNetwork._parse_formatted_delivery("by juillet 24", created)
+
+
+@pytest.mark.anyio
+async def test_network_error_becomes_a_wise_api_error(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_exception(httpx.ConnectError("network down"))
+
+    with pytest.raises(WiseAPIError, match="request failed"):
+        await WiseNetwork().get_quote(Decimal("1000"), "GBP", "CNY")
+
+
+@pytest.mark.anyio
+async def test_non_json_body_becomes_a_wise_api_error(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(text="<html>gateway timeout</html>")
+
+    with pytest.raises(WiseAPIError, match="not valid JSON"):
+        await WiseNetwork().get_quote(Decimal("1000"), "GBP", "CNY")
+
+
+@pytest.mark.anyio
+async def test_json_array_body_becomes_a_wise_api_error(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(json=[1, 2, 3])
+
+    with pytest.raises(WiseAPIError, match="must be a JSON object"):
+        await WiseNetwork().get_quote(Decimal("1000"), "GBP", "CNY")
+
+
+@pytest.mark.anyio
+async def test_an_unsupported_corridor_is_skipped_rather_than_raised(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """A corridor Wise cannot serve is not a provider failure."""
+    httpx_mock.add_response(status_code=400, text="Unsupported currency pair")
+
+    assert await WiseNetwork().get_quote(Decimal("1000"), "GBP", "CNY") is None
+
+
+@pytest.mark.anyio
+async def test_a_genuine_error_status_still_raises(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(status_code=500, text="internal error")
+
+    with pytest.raises(WiseAPIError):
+        await WiseNetwork().get_quote(Decimal("1000"), "GBP", "CNY")

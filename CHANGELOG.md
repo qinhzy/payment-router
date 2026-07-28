@@ -35,6 +35,21 @@ history and everything they describe ships in `0.7.0`.
 
 ### Changed
 
+- the active rate table, its disclosure, and the cache-invalidation counter
+  are replaced as one immutable snapshot. Assigning them separately let a
+  reader on another thread pair rates that had already been swapped with the
+  disclosure describing the previous ones, so the console could report a rate
+  date that routing had stopped using — the one thing the FX disclosure exists
+  to prevent.
+- the AI system prompt describes every payload the console can send. It named
+  only `route` and `decide` while the console had grown `sensitivity` and
+  `compare`, leaving the model to guess at shapes it was never told about, and
+  in particular free to read a rate-date comparison as what a transfer had
+  actually cost. It now states that boundary and treats a payload's `caveats`
+  list as the authoritative limits of the result.
+- `remit serve` warns when asked to bind a non-loopback address: the console
+  has no authentication, makes outbound provider requests for whoever reaches
+  it, and spends the operator's Anthropic credentials if the AI panel is used.
 - payment networks declare whether they quote at request time. A live-quoting
   adapter cannot answer for a past date, so it is excluded from a historical
   run — and from the baseline of a comparison as well, so that both sides see

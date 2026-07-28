@@ -99,18 +99,47 @@ def _frozen_source() -> RateSource:
     )
 
 
-_active_source: RateSource = _frozen_source()
-_generation = 0
-_current_status = FxStatus(
-    requested_mode="frozen",
-    mode="frozen",
-    label=_active_source.label,
-    classification=_active_source.classification,
-    rate_date=None,
-    stale=False,
-    fallback=False,
-    detail="Reproducible teaching values; not current market pricing.",
-)
+@dataclass(frozen=True, slots=True)
+class _FxState:
+    """The active source, its disclosure, and the cache-invalidation counter.
+
+    These three must move together. Assigning them separately lets a reader
+    on another thread pair new rates with the old disclosure — the console
+    would report a rate date that routing had already stopped using — so the
+    whole triple is replaced in one binding instead.
+    """
+
+    source: RateSource
+    status: FxStatus
+    generation: int
+
+
+def _initial_state() -> _FxState:
+    source = _frozen_source()
+    return _FxState(
+        source=source,
+        status=FxStatus(
+            requested_mode="frozen",
+            mode="frozen",
+            label=source.label,
+            classification=source.classification,
+            rate_date=None,
+            stale=False,
+            fallback=False,
+            detail="Reproducible teaching values; not current market pricing.",
+        ),
+        generation=0,
+    )
+
+
+_state = _initial_state()
+
+
+def _install(source: RateSource, status: FxStatus) -> FxStatus:
+    """Swap in a new source and its disclosure as one indivisible step."""
+    global _state
+    _state = _FxState(source=source, status=status, generation=_state.generation + 1)
+    return status
 
 
 def get_mid_rate(from_currency: str, to_currency: str) -> Decimal:
@@ -120,13 +149,13 @@ def get_mid_rate(from_currency: str, to_currency: str) -> Decimal:
     if source_currency == target_currency:
         return Decimal("1.0")
 
-    rates = _active_source.usd_rates
+    rates = _state.source.usd_rates
     return rates[source_currency] / rates[target_currency]
 
 
 def to_usd(amount: Decimal, currency: str) -> Decimal:
     normalized_currency = _normalize_currency(currency)
-    return _quantize_amount(amount * _active_source.usd_rates[normalized_currency])
+    return _quantize_amount(amount * _state.source.usd_rates[normalized_currency])
 
 
 def supported_currencies() -> frozenset[str]:
@@ -135,11 +164,11 @@ def supported_currencies() -> frozenset[str]:
 
 def classification() -> DataSource:
     """Provenance class of the active source (drives fee-normalization labels)."""
-    return _active_source.classification
+    return _state.source.classification
 
 
 def current_status() -> FxStatus:
-    return _current_status
+    return _state.status
 
 
 def snapshot_is_current() -> bool:
@@ -149,9 +178,10 @@ def snapshot_is_current() -> bool:
     earlier day may be superseded. Only meaningful for live mode: the frozen
     table has no date, and a historical fixing is immutable.
     """
-    if _active_source.mode != "live":
+    source = _state.source
+    if source.mode != "live":
         return True
-    return _active_source.fetched_on == datetime.now(UTC).date().isoformat()
+    return source.fetched_on == datetime.now(UTC).date().isoformat()
 
 
 def generation() -> int:
@@ -161,26 +191,26 @@ def generation() -> int:
     per-graph cost and time maxima) can compare this against the generation
     they computed under and recompute only when the source has switched.
     """
-    return _generation
+    return _state.generation
 
 
 def configure(source: RateSource) -> None:
     """Install a rate source directly (tests and embedders)."""
-    global _active_source, _current_status, _generation
     missing = _SUPPORTED_CURRENCIES - set(source.usd_rates)
     if missing:
         raise ValueError(f"rate source is missing currencies: {', '.join(sorted(missing))}")
-    _active_source = source
-    _generation += 1
-    _current_status = FxStatus(
-        requested_mode=source.mode,
-        mode=source.mode,
-        label=source.label,
-        classification=source.classification,
-        rate_date=source.rate_date,
-        stale=source.stale,
-        fallback=False,
-        detail=source.label,
+    _install(
+        source,
+        FxStatus(
+            requested_mode=source.mode,
+            mode=source.mode,
+            label=source.label,
+            classification=source.classification,
+            rate_date=source.rate_date,
+            stale=source.stale,
+            fallback=False,
+            detail=source.label,
+        ),
     )
 
 
@@ -197,7 +227,6 @@ def activate(
     frozen teaching table is not the rate that applied on that date, so an
     unavailable fixing raises instead of silently substituting one.
     """
-    global _active_source, _current_status, _generation
     if mode not in {"frozen", "live", "historical"}:
         raise ValueError(f"unknown FX mode: {mode}")
     if mode == "historical":
@@ -208,78 +237,79 @@ def activate(
         raise ValueError(f"{mode} FX mode does not accept a date")
 
     if mode == "frozen":
-        _active_source = _frozen_source()
-        _generation += 1
-        _current_status = FxStatus(
-            requested_mode="frozen",
-            mode="frozen",
-            label=_active_source.label,
-            classification=DataSource.ESTIMATED,
-            rate_date=None,
-            stale=False,
-            fallback=False,
-            detail="Reproducible teaching values; not current market pricing.",
+        frozen = _frozen_source()
+        return _install(
+            frozen,
+            FxStatus(
+                requested_mode="frozen",
+                mode="frozen",
+                label=frozen.label,
+                classification=DataSource.ESTIMATED,
+                rate_date=None,
+                stale=False,
+                fallback=False,
+                detail="Reproducible teaching values; not current market pricing.",
+            ),
         )
-        return _current_status
 
     try:
         source = live_source(timeout_seconds=timeout_seconds)
     except FxLiveUnavailableError as error:
-        _active_source = _frozen_source()
-        _generation += 1
-        _current_status = FxStatus(
-            requested_mode="live",
-            mode="frozen",
-            label=_active_source.label,
-            classification=DataSource.ESTIMATED,
-            rate_date=None,
-            stale=False,
-            fallback=True,
-            detail=f"Live FX unavailable ({error}); using the frozen teaching table.",
+        frozen = _frozen_source()
+        return _install(
+            frozen,
+            FxStatus(
+                requested_mode="live",
+                mode="frozen",
+                label=frozen.label,
+                classification=DataSource.ESTIMATED,
+                rate_date=None,
+                stale=False,
+                fallback=True,
+                detail=f"Live FX unavailable ({error}); using the frozen teaching table.",
+            ),
         )
-        return _current_status
 
-    _active_source = source
-    _generation += 1
     detail = f"ECB reference rates via Frankfurter, dated {source.rate_date}."
     if source.stale:
         detail += " Refresh failed; serving the cached snapshot."
-    _current_status = FxStatus(
-        requested_mode="live",
-        mode="live",
-        label=source.label,
-        classification=source.classification,
-        rate_date=source.rate_date,
-        stale=source.stale,
-        fallback=False,
-        detail=detail,
+    return _install(
+        source,
+        FxStatus(
+            requested_mode="live",
+            mode="live",
+            label=source.label,
+            classification=source.classification,
+            rate_date=source.rate_date,
+            stale=source.stale,
+            fallback=False,
+            detail=detail,
+        ),
     )
-    return _current_status
 
 
 def _activate_historical(on_date: str, *, timeout_seconds: float) -> FxStatus:
-    global _active_source, _current_status, _generation
     source = historical_source(on_date, timeout_seconds=timeout_seconds)
-    _active_source = source
-    _generation += 1
     detail = f"ECB reference rates published for {source.rate_date}."
     if source.rate_date != source.requested_date:
         detail += (
             f" {source.requested_date} has no published fixing"
             " (weekend or holiday); the preceding publication is used."
         )
-    _current_status = FxStatus(
-        requested_mode="historical",
-        mode="historical",
-        label=source.label,
-        classification=source.classification,
-        rate_date=source.rate_date,
-        stale=False,
-        fallback=False,
-        detail=detail,
-        requested_date=source.requested_date,
+    return _install(
+        source,
+        FxStatus(
+            requested_mode="historical",
+            mode="historical",
+            label=source.label,
+            classification=source.classification,
+            rate_date=source.rate_date,
+            stale=False,
+            fallback=False,
+            detail=detail,
+            requested_date=source.requested_date,
+        ),
     )
-    return _current_status
 
 
 def historical_source(on_date: str, *, timeout_seconds: float = 10.0) -> RateSource:
@@ -332,34 +362,33 @@ def refresh_live(*, timeout_seconds: float = 10.0) -> FxStatus:
     Two moves count as backwards and are refused: dropping out of live mode,
     and committing an older publication than the one already active.
     """
-    global _active_source, _current_status, _generation
-    if _active_source.mode != "live":
-        return _current_status
+    state = _state
+    if state.source.mode != "live":
+        return state.status
 
-    previous = _active_source
     try:
         candidate = live_source(timeout_seconds=timeout_seconds)
     except FxLiveUnavailableError:
-        return _current_status
-    if (candidate.rate_date or "") < (previous.rate_date or ""):
-        return _current_status
+        return state.status
+    if (candidate.rate_date or "") < (state.source.rate_date or ""):
+        return state.status
 
-    _active_source = candidate
-    _generation += 1
     detail = f"ECB reference rates via Frankfurter, dated {candidate.rate_date}."
     if candidate.stale:
         detail += " Refresh failed; serving the cached snapshot."
-    _current_status = FxStatus(
-        requested_mode="live",
-        mode="live",
-        label=candidate.label,
-        classification=candidate.classification,
-        rate_date=candidate.rate_date,
-        stale=candidate.stale,
-        fallback=False,
-        detail=detail,
+    return _install(
+        candidate,
+        FxStatus(
+            requested_mode="live",
+            mode="live",
+            label=candidate.label,
+            classification=candidate.classification,
+            rate_date=candidate.rate_date,
+            stale=candidate.stale,
+            fallback=False,
+            detail=detail,
+        ),
     )
-    return _current_status
 
 
 def live_source(*, timeout_seconds: float = 10.0) -> RateSource:

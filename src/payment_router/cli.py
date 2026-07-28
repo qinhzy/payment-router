@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import os
 from decimal import Decimal
 from enum import StrEnum
@@ -74,6 +75,17 @@ def _activate_fx(fx_mode: FxMode | None) -> fx.FxStatus | None:
             line += " · cached snapshot (refresh failed)"
         console.print(line, style="dim")
     return status
+
+
+def _is_loopback(host: str) -> bool:
+    candidate = host.strip().strip("[]").lower()
+    if candidate in {"localhost", ""}:
+        return True
+    try:
+        return ipaddress.ip_address(candidate).is_loopback
+    except ValueError:
+        # A hostname the CLI cannot resolve to a literal is not assumed local.
+        return False
 
 
 def _read_version() -> str:
@@ -453,6 +465,18 @@ def serve_command(
 
     url = f"http://{host}:{port}"
     console.print(f"Serving the payment-router console at {url}")
+    if not _is_loopback(host):
+        console.print(
+            Panel(
+                f"Binding {host} exposes this console beyond your machine. It has no "
+                "authentication, it issues outbound provider requests on behalf of "
+                "whoever reaches it, and — when Anthropic credentials are present — "
+                "it will spend them for anyone who opens the AI panel. It is built "
+                "as a local tool, not a deployment target.",
+                title="Non-local bind",
+                border_style="yellow",
+            )
+        )
     if open_browser:
         import threading
         import webbrowser

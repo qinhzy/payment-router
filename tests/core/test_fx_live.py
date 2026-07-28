@@ -174,6 +174,7 @@ def test_refresh_commits_a_newer_publication(fx_cache_dir, httpx_mock) -> None:
 
     assert status.rate_date == "2026-07-17"
     assert status.classification is DataSource.VERIFIED
+    _assert_consistent(fx._state)
 
 
 def test_refresh_is_a_no_op_for_frozen_and_historical_sources(fx_cache_dir) -> None:
@@ -182,3 +183,94 @@ def test_refresh_is_a_no_op_for_frozen_and_historical_sources(fx_cache_dir) -> N
     status = fx.refresh_live()
 
     assert status.mode == "frozen"
+
+
+def _assert_consistent(state) -> None:
+    """The disclosure must describe the rates that are actually active."""
+    assert state.status.mode == state.source.mode
+    assert state.status.rate_date == state.source.rate_date
+    assert state.status.classification is state.source.classification
+
+
+def test_every_source_switch_leaves_rates_and_disclosure_consistent(
+    fx_cache_dir,
+    httpx_mock,
+) -> None:
+    fx.activate("frozen")
+    _assert_consistent(fx._state)
+
+    httpx_mock.add_response(json=FRANKFURTER_JSON)
+    fx.activate("live")
+    _assert_consistent(fx._state)
+
+    fx.configure(_live_source("2026-07-19", "2026-07-19"))
+    _assert_consistent(fx._state)
+
+
+def test_live_fallback_leaves_rates_and_disclosure_consistent(
+    fx_cache_dir,
+    httpx_mock,
+) -> None:
+    httpx_mock.add_exception(httpx.ConnectError("offline"))
+
+    status = fx.activate("live")
+
+    assert status.fallback is True
+    _assert_consistent(fx._state)
+
+
+def test_a_concurrent_reader_never_sees_new_rates_with_the_old_disclosure(
+    fx_cache_dir,
+    monkeypatch,
+) -> None:
+    """The three pieces of FX state must move together.
+
+    Assigning them one at a time let a reader on another thread pair rates
+    that had already been swapped with the disclosure that still described
+    the previous ones.
+    """
+    import threading
+    import time
+
+    fx.configure(_live_source("2026-07-16", "2026-07-16"))
+    newer = fx.RateSource(
+        mode="live",
+        label="ECB reference rates (Frankfurter)",
+        classification=DataSource.VERIFIED,
+        usd_rates={code: Decimal("2.0") for code in fx.supported_currencies()},
+        rate_date="2026-07-17",
+        fetched_on="2026-07-17",
+    )
+
+    # Widen the window a scheduler would otherwise hit only rarely.
+    real_status = fx.FxStatus
+
+    def slow_status(*args, **kwargs):
+        time.sleep(0.02)
+        return real_status(*args, **kwargs)
+
+    monkeypatch.setattr(fx, "FxStatus", slow_status)
+    monkeypatch.setattr(fx, "live_source", lambda **_: newer)
+
+    observed: list[tuple[str, str | None]] = []
+    stop = threading.Event()
+
+    def reader() -> None:
+        while not stop.is_set():
+            state = fx._state
+            observed.append((str(state.source.usd_rates["EUR"]), state.status.rate_date))
+            time.sleep(0.001)
+
+    thread = threading.Thread(target=reader)
+    thread.start()
+    try:
+        time.sleep(0.03)
+        fx.refresh_live()
+        time.sleep(0.03)
+    finally:
+        stop.set()
+        thread.join()
+
+    consistent = {("1.0", "2026-07-16"), ("2.0", "2026-07-17")}
+    torn = [pair for pair in set(observed) if pair not in consistent]
+    assert torn == []
