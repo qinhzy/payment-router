@@ -320,6 +320,48 @@ def _normalize_date(on_date: str) -> str:
     return candidate
 
 
+def refresh_live(*, timeout_seconds: float = 10.0) -> FxStatus:
+    """Re-fetch live rates, but never leave the source worse than it was.
+
+    :func:`activate` treats an unavailable fetch as a first-time failure and
+    falls back to the frozen teaching table. That is right at startup, where
+    the alternative is no rates at all, and wrong for a refresh: rates that
+    are already active were published by ECB and remain the better answer.
+    A refresh that cannot improve on them is a no-op.
+
+    Two moves count as backwards and are refused: dropping out of live mode,
+    and committing an older publication than the one already active.
+    """
+    global _active_source, _current_status, _generation
+    if _active_source.mode != "live":
+        return _current_status
+
+    previous = _active_source
+    try:
+        candidate = live_source(timeout_seconds=timeout_seconds)
+    except FxLiveUnavailableError:
+        return _current_status
+    if (candidate.rate_date or "") < (previous.rate_date or ""):
+        return _current_status
+
+    _active_source = candidate
+    _generation += 1
+    detail = f"ECB reference rates via Frankfurter, dated {candidate.rate_date}."
+    if candidate.stale:
+        detail += " Refresh failed; serving the cached snapshot."
+    _current_status = FxStatus(
+        requested_mode="live",
+        mode="live",
+        label=candidate.label,
+        classification=candidate.classification,
+        rate_date=candidate.rate_date,
+        stale=candidate.stale,
+        fallback=False,
+        detail=detail,
+    )
+    return _current_status
+
+
 def live_source(*, timeout_seconds: float = 10.0) -> RateSource:
     """Return ECB rates: today's snapshot, else a fresh fetch, else stale.
 

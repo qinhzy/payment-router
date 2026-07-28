@@ -159,15 +159,14 @@ class _SessionCache:
 async def refresh_live_fx_once() -> bool:
     """Re-fetch the live ECB source when its snapshot predates today.
 
-    Returns whether a refresh was attempted. A failure leaves the existing
-    source active — a stale published fixing is a better answer than none,
-    and the status it already carries discloses the staleness — and the next
-    tick tries again.
+    Returns whether a refresh was attempted. ``fx.refresh_live`` will not
+    replace the active source with anything worse, so a failed attempt leaves
+    the console exactly as it was and the next tick tries again.
     """
     async with comparison.FX_SWITCH_LOCK:
         if fx.snapshot_is_current():
             return False
-        await asyncio.to_thread(fx.activate, "live")
+        await asyncio.to_thread(fx.refresh_live)
         return True
 
 

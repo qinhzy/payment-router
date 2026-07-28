@@ -28,8 +28,10 @@ history and everything they describe ships in `0.7.0`.
   `remit serve --fx live` re-checks the ECB source on an interval (default
   30 minutes, `--fx-refresh-minutes 0` disables it) and re-fetches only when
   the active snapshot predates today, so the console stops reporting a rate
-  date it has outgrown. A failed refresh keeps the existing source and retries
-  on the next tick.
+  date it has outgrown. A refresh is committed only when it does not move
+  backwards: it will not leave live mode and will not install an older
+  publication than the one already active, so a transient failure can never
+  replace published ECB rates with `ESTIMATED` teaching values.
 
 ### Changed
 
@@ -43,6 +45,10 @@ history and everything they describe ships in `0.7.0`.
   active source twice and restores it, so the refresh loop takes the same lock
   and cannot substitute rates underneath an in-flight comparison. The blocking
   rate fetches also moved off the event loop.
+- every test subset runs on its own. `Route` resolves a forward reference to
+  `RoutingPreference` on `router` import, so `pytest tests/core/` could not
+  construct a `Route` at all; a `conftest` import makes each subset behave
+  like the full run.
 - a historical rate request has no fallback. Live mode degrades to the frozen
   teaching table when the network is unavailable, but the frozen table is not
   the rate that applied on a past date, so an unavailable fixing raises
