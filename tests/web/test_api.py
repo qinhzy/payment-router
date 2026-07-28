@@ -538,7 +538,7 @@ def test_fx_refresh_skips_a_source_fetched_today(monkeypatch) -> None:
         dc_replace(fx_module._frozen_source(), mode="live", fetched_on=today),
     )
     calls = []
-    monkeypatch.setattr(fx_module, "activate", lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(fx_module, "refresh_live", lambda *a, **k: calls.append(a))
 
     assert asyncio.run(app_module.refresh_live_fx_once()) is False
     assert calls == []
@@ -557,10 +557,10 @@ def test_fx_refresh_refetches_a_source_from_an_earlier_day(monkeypatch) -> None:
         dc_replace(fx_module._frozen_source(), mode="live", fetched_on="2020-01-01"),
     )
     calls = []
-    monkeypatch.setattr(fx_module, "activate", lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(fx_module, "refresh_live", lambda *a, **k: calls.append(a))
 
     assert asyncio.run(app_module.refresh_live_fx_once()) is True
-    assert calls == [("live",)]
+    assert calls == [()]
 
 
 def test_fx_refresh_never_runs_for_frozen_or_historical_sources(monkeypatch) -> None:
@@ -572,7 +572,7 @@ def test_fx_refresh_never_runs_for_frozen_or_historical_sources(monkeypatch) -> 
     from payment_router.web import app as app_module
 
     calls = []
-    monkeypatch.setattr(fx_module, "activate", lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(fx_module, "refresh_live", lambda *a, **k: calls.append(a))
 
     for mode in ("frozen", "historical"):
         monkeypatch.setattr(
@@ -600,7 +600,7 @@ def test_fx_refresh_waits_for_an_in_flight_comparison(monkeypatch) -> None:
         dc_replace(fx_module._frozen_source(), mode="live", fetched_on="2020-01-01"),
     )
     order: list[str] = []
-    monkeypatch.setattr(fx_module, "activate", lambda *a, **k: order.append("refresh"))
+    monkeypatch.setattr(fx_module, "refresh_live", lambda *a, **k: order.append("refresh"))
 
     async def scenario() -> None:
         async with comparison_module.FX_SWITCH_LOCK:

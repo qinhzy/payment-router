@@ -127,3 +127,58 @@ def test_corrupt_snapshot_is_ignored(fx_cache_dir, httpx_mock) -> None:
 
     assert source.stale is False
     assert source.rate_date == "2026-07-17"
+
+
+def _live_source(rate_date: str, fetched_on: str) -> fx.RateSource:
+    return fx.RateSource(
+        mode="live",
+        label="ECB reference rates (Frankfurter)",
+        classification=DataSource.VERIFIED,
+        usd_rates={code: Decimal("1.0") for code in fx.supported_currencies()},
+        rate_date=rate_date,
+        fetched_on=fetched_on,
+    )
+
+
+def test_refresh_keeps_live_rates_when_the_fetch_fails(fx_cache_dir, httpx_mock) -> None:
+    """A refresh must never leave the source worse than it found it.
+
+    Rates already active were published by ECB; the frozen teaching table is
+    not a better answer than them just because a later fetch failed.
+    """
+    fx.configure(_live_source("2026-07-16", "2026-07-16"))
+    httpx_mock.add_exception(httpx.ConnectError("offline"))
+
+    status = fx.refresh_live()
+
+    assert status.mode == "live"
+    assert status.classification is DataSource.VERIFIED
+    assert status.rate_date == "2026-07-16"
+    assert status.fallback is False
+
+
+def test_refresh_does_not_commit_an_older_publication(fx_cache_dir, httpx_mock) -> None:
+    fx.configure(_live_source("2026-07-17", "2026-07-17"))
+    httpx_mock.add_response(json={**FRANKFURTER_JSON, "date": "2026-07-10"})
+
+    status = fx.refresh_live()
+
+    assert status.rate_date == "2026-07-17"
+
+
+def test_refresh_commits_a_newer_publication(fx_cache_dir, httpx_mock) -> None:
+    fx.configure(_live_source("2026-07-16", "2026-07-16"))
+    httpx_mock.add_response(json={**FRANKFURTER_JSON, "date": "2026-07-17"})
+
+    status = fx.refresh_live()
+
+    assert status.rate_date == "2026-07-17"
+    assert status.classification is DataSource.VERIFIED
+
+
+def test_refresh_is_a_no_op_for_frozen_and_historical_sources(fx_cache_dir) -> None:
+    fx.activate("frozen")
+
+    status = fx.refresh_live()
+
+    assert status.mode == "frozen"

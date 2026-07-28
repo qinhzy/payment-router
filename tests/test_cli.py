@@ -193,3 +193,113 @@ def test_compare_command_rejects_a_malformed_date() -> None:
 
     assert result.exit_code != 0
     assert "YYYY-MM-DD" in result.output
+
+
+def _rate_linked_networks() -> list[PaymentNetwork]:
+    """Scenario rails whose quoted rate tracks the active FX table."""
+    from decimal import Decimal
+
+    from payment_router.core import fx as fx_module
+    from payment_router.core.models import NetworkQuote
+
+    class Scenario(PaymentNetwork):
+        def display_name(self) -> str:
+            return "SWIFT"
+
+        def supported_currencies(self) -> set[str]:
+            return {"USD", "CNY"}
+
+        def get_quote(self, amount, source, target):
+            if source == target:
+                return None
+            return NetworkQuote(
+                network_name="SWIFT",
+                fee_usd=Decimal("20"),
+                time_hours=Decimal("30"),
+                fx_rate=fx_module.get_mid_rate(source, target) * Decimal("0.99"),
+                data_source=DataSource.ESTIMATED,
+            )
+
+    class LiveQuoting(Scenario):
+        def display_name(self) -> str:
+            return "Wise"
+
+        def quotes_at_request_time(self) -> bool:
+            return True
+
+    return [LiveQuoting(), Scenario()]
+
+
+def test_compare_command_renders_both_dates_deltas_and_caveats(
+    monkeypatch,
+    tmp_path,
+    httpx_mock,
+) -> None:
+    from payment_router.core import fx as fx_module
+
+    monkeypatch.setenv(fx_module.CACHE_DIR_ENV_VAR, str(tmp_path))
+    monkeypatch.setattr("payment_router.cli._instantiate_networks", _rate_linked_networks)
+    january = {
+        "amount": 1.0,
+        "base": "USD",
+        "date": "2024-01-02",
+        "rates": {"CNY": 7.1, "EUR": 0.906, "GBP": 0.784, "HKD": 7.81, "SGD": 1.32},
+    }
+    httpx_mock.add_response(
+        json={**january, "date": "2024-06-03", "rates": {**january["rates"], "CNY": 7.6}}
+    )
+    httpx_mock.add_response(json=january)
+
+    try:
+        result = runner.invoke(
+            app,
+            ["compare", "USD", "CNY", "1000", "--on", "2024-01-02", "--against", "2024-06-03"],
+        )
+    finally:
+        fx_module.activate("frozen")
+
+    assert result.exit_code == 0
+    output = " ".join(result.output.split())
+    assert "2024-06-03" in output and "2024-01-02" in output
+    assert "Mid-rate" in output
+    assert "Recipient gets" in output
+    # Only the FX table moves, so the fee cannot differ between the sides.
+    assert "+0.00 USD" in output
+    assert "Only the FX table differs" in output
+    # The live-quoting rail is dropped from both sides, not just the historical one.
+    assert "Excluded from both sides: Wise" in output
+    assert "SWIFT" in output
+
+
+def test_compare_command_reports_a_weekend_rate_date_resolution(
+    monkeypatch,
+    tmp_path,
+    httpx_mock,
+) -> None:
+    from payment_router.core import fx as fx_module
+
+    monkeypatch.setenv(fx_module.CACHE_DIR_ENV_VAR, str(tmp_path))
+    # Pin the width: at 80 columns Rich wraps the rate-date cell, which would
+    # make this assertion depend on the terminal rather than on the behaviour.
+    monkeypatch.setenv("COLUMNS", "200")
+    monkeypatch.setattr("payment_router.cli._instantiate_networks", _rate_linked_networks)
+    base = {
+        "amount": 1.0,
+        "base": "USD",
+        "rates": {"CNY": 7.1, "EUR": 0.906, "GBP": 0.784, "HKD": 7.81, "SGD": 1.32},
+    }
+    httpx_mock.add_response(json={**base, "date": "2024-06-03"})
+    httpx_mock.add_response(json={**base, "date": "2024-01-05"})
+
+    try:
+        result = runner.invoke(
+            app,
+            ["compare", "USD", "CNY", "1000", "--on", "2024-01-06", "--against", "2024-06-03"],
+        )
+    finally:
+        fx_module.activate("frozen")
+
+    assert result.exit_code == 0
+    output = " ".join(result.output.split())
+    assert "asked 2024-01-06" in output
+    assert "no published ECB fixing" in output
