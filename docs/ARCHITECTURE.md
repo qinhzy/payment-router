@@ -130,6 +130,11 @@ take `comparison.FX_SWITCH_LOCK`, so a refresh cannot land between a
 comparison's two sides and price them against different tables. Rate fetches
 are synchronous HTTP, so async callers run them in a worker thread.
 
+All three pieces of FX state — the source, its disclosure, and the
+generation counter — are replaced as one immutable snapshot. A reader takes a
+single reference and therefore always sees rates and disclosure that describe
+each other, rather than a pair caught mid-swap.
+
 The refresh only applies to live mode: the frozen table has no date and a
 historical fixing is immutable. A failed refresh keeps the current source
 rather than degrading it, and `/api/meta` reads the status per request, so the

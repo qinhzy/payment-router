@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from helpers import FakeNetwork, make_quote
 from typer.testing import CliRunner
 
@@ -303,3 +304,21 @@ def test_compare_command_reports_a_weekend_rate_date_resolution(
     output = " ".join(result.output.split())
     assert "asked 2024-01-06" in output
     assert "no published ECB fixing" in output
+
+
+@pytest.mark.parametrize(
+    ("host", "loopback"),
+    [
+        ("127.0.0.1", True),
+        ("localhost", True),
+        ("::1", True),
+        ("[::1]", True),
+        ("0.0.0.0", False),
+        ("192.168.1.20", False),
+        ("example.internal", False),
+    ],
+)
+def test_loopback_detection(host: str, loopback: bool) -> None:
+    from payment_router.cli import _is_loopback
+
+    assert _is_loopback(host) is loopback

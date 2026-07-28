@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 
+import pytest
 from fastapi.testclient import TestClient
 
 from payment_router.web.app import create_app
@@ -109,3 +110,110 @@ def test_explain_rejects_unknown_kind() -> None:
     )
 
     assert response.status_code == 422
+
+
+class _FakeStream:
+    """Stands in for anthropic's streaming context manager."""
+
+    def __init__(self, chunks: list[str], recorder: dict) -> None:
+        self._chunks = chunks
+        self._recorder = recorder
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info) -> bool:
+        self._recorder["closed"] = True
+        return False
+
+    @property
+    def text_stream(self):
+        async def generate():
+            for chunk in self._chunks:
+                yield chunk
+
+        return generate()
+
+
+class _FakeMessages:
+    def __init__(self, chunks: list[str], recorder: dict) -> None:
+        self._chunks = chunks
+        self._recorder = recorder
+
+    def stream(self, **kwargs):
+        self._recorder["kwargs"] = kwargs
+        return _FakeStream(self._chunks, self._recorder)
+
+
+def _explainer_with(chunks: list[str], recorder: dict):
+    from payment_router.web.ai import AIExplainer
+
+    explainer = AIExplainer.__new__(AIExplainer)
+    explainer._client = type("C", (), {"messages": _FakeMessages(chunks, recorder)})()
+    explainer._model = "test-model"
+    return explainer
+
+
+def test_stream_explanation_sends_the_payload_and_yields_the_text() -> None:
+    import asyncio
+
+    recorder: dict = {}
+    explainer = _explainer_with(["Take ", "the direct ", "route."], recorder)
+
+    async def collect() -> str:
+        return "".join(
+            [
+                chunk
+                async for chunk in explainer.stream_explanation(
+                    "compare",
+                    {"deltas": {"fee_usd": "0"}, "caveats": ["only FX moved"]},
+                    "zh-CN",
+                )
+            ]
+        )
+
+    assert asyncio.run(collect()) == "Take the direct route."
+    assert recorder["closed"] is True
+
+    kwargs = recorder["kwargs"]
+    assert kwargs["model"] == "test-model"
+    message = kwargs["messages"][0]["content"]
+    # The model must receive the console's exact JSON, the kind, and the language.
+    assert "Response language: zh-CN" in message
+    assert "Result kind: compare" in message
+    assert '"fee_usd": "0"' in message
+    assert "only FX moved" in message
+
+
+def test_stream_explanation_rejects_an_oversized_payload() -> None:
+    import asyncio
+
+    from payment_router.web.ai import ExplainRequestError
+
+    recorder: dict = {}
+    explainer = _explainer_with(["ignored"], recorder)
+
+    async def collect() -> None:
+        async for _ in explainer.stream_explanation("route", {"blob": "x" * 70_000}, "en"):
+            pass
+
+    with pytest.raises(ExplainRequestError):
+        asyncio.run(collect())
+    assert "kwargs" not in recorder
+
+
+def test_system_prompt_describes_every_payload_kind_the_app_can_send() -> None:
+    """The console sends four kinds; a prompt that names two invites invention."""
+    from payment_router.web.ai import SYSTEM_PROMPT
+    from payment_router.web.app import ExplainRequest
+
+    kinds = ExplainRequest.model_fields["kind"].annotation.__args__
+    for kind in kinds:
+        assert f'"{kind}"' in SYSTEM_PROMPT, f"{kind} is undescribed"
+
+
+def test_system_prompt_forbids_reading_a_comparison_as_an_actual_past_cost() -> None:
+    from payment_router.web.ai import SYSTEM_PROMPT
+
+    assert "NOT a reconstruction" in SYSTEM_PROMPT
+    assert "authoritative limits" in SYSTEM_PROMPT
