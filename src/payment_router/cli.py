@@ -15,7 +15,7 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
-from payment_router import comparison, sensitivity, service
+from payment_router import breakeven, comparison, sensitivity, service
 from payment_router.core import fx
 from payment_router.decision import (
     DecisionProfile,
@@ -388,6 +388,101 @@ def _signed(value, places: int) -> str:
     quantum = Decimal(1).scaleb(-places)
     rounded = value.quantize(quantum)
     return f"+{rounded}" if rounded >= 0 else str(rounded)
+
+
+@app.command("breakeven")
+def breakeven_command(
+    from_currency: Annotated[str, typer.Argument(help="Source currency code.")],
+    to_currency: Annotated[str, typer.Argument(help="Target currency code.")],
+    min_amount: Annotated[str, typer.Option("--min", help="Smallest amount to test.")] = "10",
+    max_amount: Annotated[str, typer.Option("--max", help="Largest amount to test.")] = "100000",
+    samples: Annotated[
+        int,
+        typer.Option("--samples", min=2, max=40, help="Coarse scan resolution."),
+    ] = breakeven.DEFAULT_SAMPLES,
+    refine: Annotated[
+        int,
+        typer.Option("--refine", min=0, max=20, help="Bisection steps per boundary."),
+    ] = breakeven.DEFAULT_REFINE_STEPS,
+    prefer: Annotated[
+        DecisionProfile,
+        typer.Option("--prefer", help="Profile applied at every amount."),
+    ] = DecisionProfile.BALANCED,
+    fx_mode: Annotated[FxMode | None, _FX_OPTION] = None,
+) -> None:
+    """Find the amounts at which the best route changes."""
+    _activate_fx(fx_mode)
+    try:
+        low = service.parse_amount(min_amount)
+        high = service.parse_amount(max_amount)
+        report = asyncio.run(
+            breakeven.analyze(
+                from_currency,
+                to_currency,
+                _instantiate_networks,
+                min_amount=low,
+                max_amount=high,
+                profile=prefer,
+                samples=samples,
+                refine_steps=refine,
+            )
+        )
+    except (RoutingRequestError, ValueError) as error:
+        _print_error(str(error))
+        raise typer.Exit(code=1) from None
+
+    if not report.regions:
+        _print_error(
+            f"No route found from {report.source_currency} to "
+            f"{report.target_currency} at any tested amount."
+        )
+        raise typer.Exit(code=1)
+
+    table = Table(
+        title=(
+            f"{report.source_currency} → {report.target_currency} · "
+            f"{report.profile.value} · best route by amount"
+        ),
+        header_style="bold white",
+    )
+    table.add_column("Amount range", justify="right")
+    table.add_column("Best route", style="cyan")
+    table.add_column("Networks")
+    for region in report.regions:
+        path, networks = region.signature
+        table.add_row(
+            f"{format_amount(region.amount_start)} – {format_amount(region.amount_end)}",
+            " → ".join(path),
+            ", ".join(dict.fromkeys(networks)),
+        )
+    console.print(table)
+
+    if report.crossovers:
+        lines = []
+        for crossover in report.crossovers:
+            below = ", ".join(dict.fromkeys(crossover.below[1]))
+            above = ", ".join(dict.fromkeys(crossover.above[1]))
+            lines.append(
+                f"{below} → {above} somewhere in "
+                f"{format_amount(crossover.bracket_low)}–"
+                f"{format_amount(crossover.bracket_high)} "
+                f"{report.source_currency}"
+            )
+        console.print(
+            Panel(
+                "\n".join(lines),
+                title="Crossovers",
+                border_style="green",
+            )
+        )
+
+    console.print(
+        Panel(
+            "\n".join(f"• {caveat}" for caveat in report.caveats),
+            title=f"What this does and does not show ({report.builds} quote rounds)",
+            border_style="yellow",
+        )
+    )
 
 
 @app.command("networks")

@@ -13,6 +13,7 @@
   const decideButton = $("#decide-button");
   const sensitivityButton = $("#sensitivity-button");
   const compareButton = $("#compare-button");
+  const breakevenButton = $("#breakeven-button");
   const onDateInput = $("#on-date");
   const alertsBox = $("#alerts");
   const warningsBox = $("#warnings");
@@ -211,20 +212,21 @@
 
   function buttonForKind(kind) {
     if (kind === "compare") return compareButton;
+    if (kind === "breakeven") return breakevenButton;
     if (kind === "decide") return decideButton;
     if (kind === "sensitivity") return sensitivityButton;
     return routeButton;
   }
 
   function setBusy(busy, activeButton) {
-    [routeButton, decideButton, sensitivityButton, compareButton].forEach((button) => {
+    [routeButton, decideButton, sensitivityButton, compareButton, breakevenButton].forEach((button) => {
       button.disabled = busy;
     });
     if (busy) {
       activeButton.dataset.label = activeButton.textContent;
       activeButton.replaceChildren(svg('<span class="spinner"></span>'), document.createTextNode(" Working…"));
     } else {
-      [routeButton, decideButton, sensitivityButton, compareButton].forEach((button) => {
+      [routeButton, decideButton, sensitivityButton, compareButton, breakevenButton].forEach((button) => {
         if (button.dataset.label) {
           button.textContent = button.dataset.label;
           delete button.dataset.label;
@@ -295,7 +297,7 @@
     if (kind === "compare") {
       params.set("view", kind);
       params.set("on", request.on_date);
-    } else if (kind === "decide" || kind === "sensitivity") {
+    } else if (kind === "breakeven" || kind === "decide" || kind === "sensitivity") {
       params.set("view", kind);
     } else {
       params.set("profile", request.profile);
@@ -312,8 +314,7 @@
     if (!source || !target || !amount) return null;
     const view = params.get("view");
     return {
-      kind:
-        view === "decide" || view === "sensitivity" || view === "compare" ? view : "route",
+      kind: ["decide", "sensitivity", "compare", "breakeven"].includes(view) ? view : "route",
       on_date: params.get("on") || "",
       source: source.toUpperCase(),
       target: target.toUpperCase(),
@@ -415,7 +416,9 @@
               ? "sensitivity"
               : item.kind === "compare"
                 ? `vs ${item.on_date || "a past date"}`
-                : item.profile
+                : item.kind === "breakeven"
+                  ? "break-even"
+                  : item.profile
         )
       );
       chip.addEventListener("click", () => {
@@ -981,6 +984,110 @@
     resultsBox.replaceChildren(panel);
   }
 
+  /* ---------- break-even rendering ---------- */
+
+  function renderBreakeven(data) {
+    const source = data.request.source;
+    const panel = el("section", "panel");
+    const header = el("div", "panel-header");
+    header.append(el("h2", "", "Break-even by amount"));
+    header.append(
+      el("span", "hint", `Which route wins at which size · ${data.builds} quote rounds`)
+    );
+    panel.append(header);
+
+    // Geometric axis: fee structure is scale-driven, so equal ratios, not
+    // equal differences, are what the eye should compare.
+    const low = Math.log10(Math.max(Number.parseFloat(data.request.min_amount), 0.01));
+    const high = Math.log10(Math.max(Number.parseFloat(data.request.max_amount), 0.02));
+    const position = (value) =>
+      ((Math.log10(Math.max(Number.parseFloat(value), 0.01)) - low) / (high - low)) * 100;
+
+    const slots = new Map();
+    data.regions.forEach((region) => {
+      const key = [...new Set(region.route.hops.map((h) => h.network))].join(", ");
+      if (!slots.has(key)) slots.set(key, slots.size);
+    });
+    const slotColor = (index) =>
+      index < 8 ? `var(--series-${index + 1})` : "var(--series-other)";
+
+    const wrap = el("div", "regime-wrap");
+    const strip = el("div", "regime-strip");
+    data.regions.forEach((region) => {
+      const networks = [...new Set(region.route.hops.map((h) => h.network))].join(", ");
+      const segment = el("div", "regime-segment");
+      segment.style.width = `${Math.max(
+        position(region.amount_end) - position(region.amount_start),
+        0.8
+      )}%`;
+      segment.style.background = slotColor(slots.get(networks));
+      segment.title =
+        `${networks} · ${fmtMoney(region.amount_start, source)} – ` +
+        `${fmtMoney(region.amount_end, source)}`;
+      strip.append(segment);
+    });
+    wrap.append(strip);
+
+    const axis = el("div", "regime-axis");
+    axis.append(el("span", "", fmtMoney(data.request.min_amount, source)));
+    axis.append(el("span", "", "amount sent (log scale)"));
+    axis.append(el("span", "", fmtMoney(data.request.max_amount, source)));
+    wrap.append(axis);
+
+    const legend = el("div", "regime-legend");
+    data.regions.forEach((region) => {
+      const networks = [...new Set(region.route.hops.map((h) => h.network))].join(", ");
+      const row = el("div", "legend-row");
+      const dot = el("span", "dot");
+      dot.style.background = slotColor(slots.get(networks));
+      row.append(dot);
+      row.append(el("span", "legend-path", networks));
+      row.append(
+        el(
+          "span",
+          "legend-meta",
+          `${fmtMoney(region.amount_start, source)} – ${fmtMoney(region.amount_end, source)}`
+        )
+      );
+      legend.append(row);
+    });
+    wrap.append(legend);
+    panel.append(wrap);
+
+    if (data.crossovers && data.crossovers.length > 0) {
+      const rows = el("div", "delta-rows");
+      data.crossovers.forEach((crossover) => {
+        const row = el("div");
+        row.append(
+          el(
+            "span",
+            "label",
+            `${crossover.below.networks.join(", ")} → ${crossover.above.networks.join(", ")}`
+          )
+        );
+        // Always a bracket: the exact crossing was never observed.
+        row.append(
+          el(
+            "span",
+            "value",
+            `${fmtMoney(crossover.bracket_low, source)} – ` +
+              `${fmtMoney(crossover.bracket_high, source)}`
+          )
+        );
+        rows.append(row);
+      });
+      panel.append(rows);
+    }
+
+    if (data.caveats && data.caveats.length > 0) {
+      const caveats = el("div", "caveat-rows");
+      data.caveats.forEach((caveat) => caveats.append(el("div", "", `⚠ ${caveat}`)));
+      panel.append(caveats);
+    }
+
+    resultsBox.replaceChildren(panel);
+  }
+
   /* ---------- sources rendering ---------- */
 
   function renderSources(records) {
@@ -1213,7 +1320,13 @@
             ? await apiGet("/api/sensitivity", corridor, signal)
             : kind === "compare"
               ? await apiGet("/api/compare", { ...corridor, on: request.on_date }, signal)
-              : await apiGet("/api/route", request, signal);
+              : kind === "breakeven"
+                ? await apiGet(
+                    "/api/breakeven",
+                    { source: request.source, target: request.target },
+                    signal
+                  )
+                : await apiGet("/api/route", request, signal);
       if (signal.aborted) return;
       showWarnings(data.warnings);
       if (kind === "decide") {
@@ -1222,6 +1335,8 @@
         renderSensitivity(data);
       } else if (kind === "compare") {
         renderComparison(data);
+      } else if (kind === "breakeven") {
+        renderBreakeven(data);
       } else {
         renderRoutes(data);
       }
@@ -1253,6 +1368,7 @@
   sensitivityButton.addEventListener("click", () =>
     runRequest("sensitivity", sensitivityButton)
   );
+  breakevenButton.addEventListener("click", () => runRequest("breakeven", breakevenButton));
   compareButton.addEventListener("click", () => {
     if (!onDateInput.value) {
       showError("Pick a rate date to compare against.");

@@ -3,6 +3,31 @@
 All notable user-visible changes are recorded here. The project follows
 [Semantic Versioning](https://semver.org/) while it approaches a stable API.
 
+## [0.8.0] - Unreleased
+
+### Added
+
+- break-even analysis across the amount axis. `remit breakeven SOURCE TARGET
+  [--min A --max B]`, `GET /api/breakeven`, and a console **Break-even** view
+  report which route wins at which size of transfer, and the amount brackets
+  where the winner changes. A fixed fee dominates a small transfer while FX
+  spread dominates a large one, so rails that lean on different parts of the
+  fee structure cross somewhere in between; nothing else in the simulator
+  looked along that axis.
+- the search samples geometrically and then bisects only the boundaries it
+  found, because every sampled amount needs its own graph and, with a live
+  provider, its own quote round. Locating a crossing to within a few currency
+  units costs roughly 20 builds rather than the thousands a dense scan of the
+  same precision would need.
+
+### Changed
+
+- a crossover is always reported as a bracket. The exact crossing is never
+  observed, only bracketed, so the figure is presented as a range and the
+  caveat says why. The report also states when the fees producing a crossing
+  are scenario assumptions, making the boundary a property of the model
+  rather than a measured market fact.
+
 `0.7.0` is the first tagged release. Versions `0.2.0` through `0.6.0` were
 developed in the open but never tagged, so their entries are kept below for
 history and everything they describe ships in `0.7.0`.

@@ -140,6 +140,22 @@ historical fixing is immutable. A failed refresh keeps the current source
 rather than degrading it, and `/api/meta` reads the status per request, so the
 console's disclosed rate date always matches what routing is using.
 
+## Break-even analysis
+
+`breakeven.py` looks along the amount axis, which no other analysis does.
+Quotes depend on the amount quoted, so every sampled amount needs its own
+graph — with a live provider, its own quote round. The search therefore scans
+coarsely on a geometric scale (fee structure is scale-driven, so equal ratios
+are the meaningful step) and then bisects only across the boundaries where the
+winner actually changed. Precision comes from bisection rather than from
+sampling density, so locating a crossing costs roughly `samples + boundaries *
+refine_steps` builds instead of one per unit of precision.
+
+A crossing is never observed exactly, only bracketed. The report carries the
+bracket alongside the figure and says so, and it flags when the fees producing
+a crossing are scenario assumptions — in that case the boundary is a property
+of the model, not a measured market fact.
+
 ## Historical comparison
 
 `comparison.py` prices one corridor under two ECB rate dates. Only the FX
@@ -187,7 +203,7 @@ always agree on routing behavior and error messages.
 - `cli.py` renders Rich tables, panels, and Mermaid source in the terminal.
 - `web/app.py` is a FastAPI application (optional `web` extra) exposing
   `/api/meta`, `/api/route`, `/api/decide`, `/api/sensitivity`,
-  `/api/compare`, and `/api/sources`, and serving the static single-page console from
+  `/api/compare`, `/api/breakeven`, and `/api/sources`, and serving the static single-page console from
   `web/static/`. JSON amounts reuse the exact CLI formatting helpers, so both
   frontends display identical numbers.
 - A preference sweep runs `steps + 1` route selections with no awaits between

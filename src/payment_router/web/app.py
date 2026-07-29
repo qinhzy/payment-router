@@ -19,7 +19,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from payment_router import comparison, sensitivity, service
+from payment_router import breakeven, comparison, sensitivity, service
 from payment_router.core import fx
 from payment_router.decision import DecisionProfile, build_decision_board, summarize_tradeoff
 from payment_router.networks.base import PaymentNetwork
@@ -75,7 +75,7 @@ def _default_explainer() -> Explainer | None:
 
 
 class ExplainRequest(BaseModel):
-    kind: Literal["route", "decide", "sensitivity", "compare"]
+    kind: Literal["route", "decide", "sensitivity", "compare", "breakeven"]
     data: dict[str, object]
     lang: str = Field(default="en", max_length=35)
 
@@ -441,6 +441,44 @@ def create_app(
                 ),
             )
         return schemas.comparison_to_json(report)
+
+    @application.get("/api/breakeven")
+    async def breakeven_endpoint(
+        source: _CurrencyParam,
+        target: _CurrencyParam,
+        min_amount: Annotated[str, Query(alias="min", description="Smallest amount.")] = "10",
+        max_amount: Annotated[str, Query(alias="max", description="Largest amount.")] = "100000",
+        samples: Annotated[int, Query(ge=2, le=40)] = breakeven.DEFAULT_SAMPLES,
+        refine: Annotated[int, Query(ge=0, le=20)] = breakeven.DEFAULT_REFINE_STEPS,
+        profile: DecisionProfile = DecisionProfile.BALANCED,
+    ) -> dict[str, object]:
+        # Deliberately not cached: every sampled amount needs its own graph,
+        # and the session cache is keyed by amount, so there is nothing to reuse.
+        try:
+            report = await breakeven.analyze(
+                source,
+                target,
+                networks_factory,
+                min_amount=service.parse_amount(min_amount),
+                max_amount=service.parse_amount(max_amount),
+                profile=profile,
+                samples=samples,
+                refine_steps=refine,
+            )
+        except service.RoutingRequestError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from None
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from None
+
+        if not report.regions:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"No route found from {report.source_currency} to "
+                    f"{report.target_currency} at any tested amount."
+                ),
+            )
+        return schemas.breakeven_to_json(report)
 
     @application.post("/api/explain")
     async def explain(request: ExplainRequest) -> StreamingResponse:
