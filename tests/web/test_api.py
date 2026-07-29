@@ -605,3 +605,59 @@ def test_fx_refresh_waits_for_an_in_flight_comparison(monkeypatch) -> None:
     asyncio.run(scenario())
 
     assert order == ["comparison-still-running", "refresh"]
+
+
+def test_breakeven_returns_regions_and_crossovers() -> None:
+    from decimal import Decimal
+
+    from payment_router.core import fx as fx_module
+    from payment_router.core.models import NetworkQuote
+
+    class Rail(PaymentNetwork):
+        def __init__(self, name: str, fixed: str, spread: str) -> None:
+            self._name, self._fixed, self._spread = name, Decimal(fixed), Decimal(spread)
+
+        def display_name(self) -> str:
+            return self._name
+
+        def supported_currencies(self) -> set[str]:
+            return {"USD", "CNY"}
+
+        def get_quote(self, amount, source, target):
+            if source == target:
+                return None
+            return NetworkQuote(
+                network_name=self._name,
+                fee_usd=self._fixed,
+                time_hours=Decimal("24"),
+                fx_rate=fx_module.get_mid_rate(source, target) * (Decimal("1") - self._spread),
+                data_source=DataSource.ESTIMATED,
+            )
+
+    def rails() -> list[PaymentNetwork]:
+        return [Rail("FlatFee", "40", "0"), Rail("SpreadHeavy", "0", "0.01")]
+
+    response = _client(rails).get(
+        "/api/breakeven",
+        params={"source": "USD", "target": "CNY", "min": "10", "max": "100000", "refine": 8},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["regions"]) == 2
+    assert len(payload["crossovers"]) == 1
+    crossover = payload["crossovers"][0]
+    assert float(crossover["bracket_low"]) <= 4000 <= float(crossover["bracket_high"])
+    assert crossover["below"]["networks"] == ["SpreadHeavy"]
+    assert crossover["above"]["networks"] == ["FlatFee"]
+    assert payload["builds"] > 0
+    assert any("bracket, not an exact figure" in caveat for caveat in payload["caveats"])
+
+
+def test_breakeven_rejects_an_inverted_range() -> None:
+    response = _client().get(
+        "/api/breakeven",
+        params={"source": "USD", "target": "CNY", "min": "1000", "max": "10"},
+    )
+
+    assert response.status_code == 400

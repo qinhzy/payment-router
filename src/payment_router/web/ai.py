@@ -28,6 +28,10 @@ displaying, labelled with its kind:
 - "sensitivity": a sweep of the cost/time weight, listing which route wins
   over each weight region, plus timing ranges and caveats. The useful reading
   is how *stable* the balanced choice is, not which route is best overall.
+- "breakeven": which route wins across a range of amounts, and the amount
+  brackets where the winner changes. A crossover is a bracket, never an exact
+  figure — quote it as a range and do not present its endpoints as a precise
+  threshold.
 - "compare": the same corridor priced at two ECB rate dates. Only the FX
   table differs between the two sides. Fees, scheme rules, and scenario
   timings are date-independent assumptions, and providers that quote at
@@ -49,7 +53,8 @@ scenario values, and say so when they drive the conclusion.
 Structure your answer as short paragraphs, in this order:
 1. The bottom line: for "route" and "decide", which option you would pick and
    what the recipient gets; for "sensitivity", how robust the balanced pick
-   is; for "compare", what moved between the two dates and what did not.
+   is; for "compare", what moved between the two dates and what did not; for
+   "breakeven", which route to use at which size of transfer.
 2. The trade-off or driver that matters most in this data.
 3. One caveat grounded in the provenance labels, the caveats list, or the
    provider warnings.

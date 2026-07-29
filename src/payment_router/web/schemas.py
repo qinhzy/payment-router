@@ -11,6 +11,7 @@ separators or currency symbols here would silently break the console.
 
 from __future__ import annotations
 
+from payment_router.breakeven import AmountRegion, BreakevenReport, Crossover
 from payment_router.comparison import ComparisonReport, ComparisonSide
 from payment_router.core.models import DataSource, Hop, Route
 from payment_router.decision import DecisionTradeoff, RouteDecision
@@ -153,5 +154,40 @@ def comparison_to_json(report: ComparisonReport) -> dict[str, object]:
             "time_hours": optional(report.time_delta_hours),
             "route_changed": report.route_changed,
         },
+        "caveats": list(report.caveats),
+    }
+
+
+def amount_region_to_json(region: AmountRegion) -> dict[str, object]:
+    return {
+        "amount_start": format_amount(region.amount_start),
+        "amount_end": format_amount(region.amount_end),
+        "route": route_to_json(region.route),
+    }
+
+
+def crossover_to_json(crossover: Crossover) -> dict[str, object]:
+    return {
+        "amount": format_amount(crossover.amount),
+        "bracket_low": format_amount(crossover.bracket_low),
+        "bracket_high": format_amount(crossover.bracket_high),
+        "bracket_width": format_amount(crossover.bracket_width),
+        "below": {"path": list(crossover.below[0]), "networks": list(crossover.below[1])},
+        "above": {"path": list(crossover.above[0]), "networks": list(crossover.above[1])},
+    }
+
+
+def breakeven_to_json(report: BreakevenReport) -> dict[str, object]:
+    return {
+        "request": {
+            "source": report.source_currency,
+            "target": report.target_currency,
+            "profile": report.profile.value,
+            "min_amount": format_amount(report.min_amount),
+            "max_amount": format_amount(report.max_amount),
+        },
+        "regions": [amount_region_to_json(region) for region in report.regions],
+        "crossovers": [crossover_to_json(crossover) for crossover in report.crossovers],
+        "builds": report.builds,
         "caveats": list(report.caveats),
     }
