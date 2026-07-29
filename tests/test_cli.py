@@ -208,6 +208,55 @@ def test_regime_command_renders_grid_legend_and_actual_build_count(monkeypatch) 
     assert "sampled, not exact" in output
 
 
+def _weight_sensitive_networks() -> list[PaymentNetwork]:
+    """One fast, dear rail and one slow, cheap one, so the winner flips with α."""
+    return [
+        FakeNetwork(
+            "Wise",
+            {"USD", "CNY"},
+            {("USD", "CNY"): make_quote("Fast", "40", "1", "7.0", DataSource.VERIFIED)},
+        ),
+        FakeNetwork(
+            "SWIFT",
+            {"USD", "CNY"},
+            {("USD", "CNY"): make_quote("Cheap", "1", "48", "7.0", DataSource.VERIFIED)},
+        ),
+    ]
+
+
+def test_regime_command_merges_only_identical_neighbouring_weight_rows(monkeypatch) -> None:
+    monkeypatch.setattr("payment_router.cli._instantiate_networks", _weight_sensitive_networks)
+    monkeypatch.setenv("COLUMNS", "200")
+
+    result = runner.invoke(
+        app,
+        [
+            "regime",
+            "USD",
+            "CNY",
+            "--min",
+            "100",
+            "--max",
+            "10000",
+            "--amount-samples",
+            "3",
+            "--weight-steps",
+            "10",
+        ],
+    )
+
+    assert result.exit_code == 0
+    output = " ".join(result.output.split())
+    # Merging must be lossless: 11 weights collapse to the 4 rows that actually
+    # differ, and the footer discloses both counts.
+    assert "11 sampled cost weights, shown as 4 distinct rows" in output
+    # A merged band is labelled by its range, a lone weight by its own value.
+    assert "0.00–0.50" in output
+    assert "0.60" in output
+    # Rows that differ are never merged away, so both winners survive.
+    assert "Fast" in output and "Cheap" in output
+
+
 def test_route_command_supports_hkd_to_cny_cips_corridor(monkeypatch) -> None:
     monkeypatch.setattr("payment_router.cli._instantiate_networks", _stub_networks)
 

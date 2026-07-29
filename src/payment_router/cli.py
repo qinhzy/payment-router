@@ -566,9 +566,25 @@ def regime_command(
     table.add_column("α", justify="right", no_wrap=True)
     for index in range(len(report.amounts)):
         table.add_column(str(index + 1), justify="center", no_wrap=True)
+
+    # Collapse consecutive weights that produce an identical row. The default
+    # 60 steps would otherwise print 61 near-identical lines for a map whose
+    # entire content is often a single region, which scrolls off any terminal.
+    # `sensitivity` and `breakeven` compress their axes the same way. Every
+    # weight is still sampled; only the display is merged.
+    runs: list[tuple[int, int]] = []
     for weight_index in range(len(report.cost_weights) - 1, -1, -1):
-        cells: list[Text | str] = [f"{report.cost_weights[weight_index]:.2f}"]
-        for signature in report.grid[weight_index]:
+        if runs and report.grid[runs[-1][1]] == report.grid[weight_index]:
+            runs[-1] = (runs[-1][0], weight_index)
+        else:
+            runs.append((weight_index, weight_index))
+
+    for high_index, low_index in runs:
+        high = report.cost_weights[high_index]
+        low = report.cost_weights[low_index]
+        label = f"{high:.2f}" if high_index == low_index else f"{low:.2f}–{high:.2f}"
+        cells: list[Text | str] = [label]
+        for signature in report.grid[high_index]:
             if signature is None:
                 cells.append(Text("·", style="dim"))
                 continue
@@ -576,6 +592,12 @@ def regime_command(
             cells.append(Text(symbol, style=f"bold {color}"))
         table.add_row(*cells)
     console.print(table)
+    console.print(
+        f"{len(report.cost_weights)} sampled cost weights, "
+        f"shown as {len(runs)} distinct row{'' if len(runs) == 1 else 's'}; "
+        "identical neighbours are merged.",
+        style="dim",
+    )
 
     amount_key = " · ".join(
         f"{index + 1}={format_amount(amount)}" for index, amount in enumerate(report.amounts)

@@ -38,13 +38,16 @@ class Rail(PaymentNetwork):
         )
 
 
-def _crossing_rails() -> list[PaymentNetwork]:
-    # Pure-cost break-even: fixed fee F = 40 versus spread s = 0.01.
-    # Therefore A = F / s = 4000.
-    return [Rail("FlatFee", fixed="40"), Rail("SpreadHeavy", spread="0.01")]
+def _crossing_rails(fixed_fee: str):
+    """Two rails whose pure-cost break-even is exactly ``fixed_fee / 0.01``."""
+
+    def factory() -> list[PaymentNetwork]:
+        return [Rail("FlatFee", fixed=fixed_fee), Rail("SpreadHeavy", spread="0.01")]
+
+    return factory
 
 
-def _analyze(**kwargs) -> regime.RegimeMap:
+def _analyze(*, fixed_fee: str = "40", **kwargs) -> regime.RegimeMap:
     params = {
         "min_amount": Decimal("100"),
         "max_amount": Decimal("100000"),
@@ -52,26 +55,63 @@ def _analyze(**kwargs) -> regime.RegimeMap:
         "weight_steps": 8,
         **kwargs,
     }
-    return asyncio.run(regime.analyze("USD", "CNY", _crossing_rails, **params))
+    return asyncio.run(regime.analyze("USD", "CNY", _crossing_rails(fixed_fee), **params))
 
 
-def test_pure_cost_boundary_brackets_the_known_analytic_answer() -> None:
-    report = _analyze()
+# 25 log-spaced samples over 100..100_000 step by 10 ** (1/8) ≈ 1.3335, so a
+# bracketed boundary is pinned to within 34% rather than the 137% that the
+# default 9 samples would allow.
+_FINE_SAMPLES = 25
+_SAMPLE_RATIO = Decimal("1.34")
 
+
+def _pure_cost_boundary(report: regime.RegimeMap) -> int:
+    """Index of the one amount step at which the pure-cost row changes winner."""
     pure_cost_row = report.grid[-1]
     changes = [
         index
         for index, (below, above) in enumerate(zip(pure_cost_row, pure_cost_row[1:], strict=False))
         if below is not None and above is not None and below != above
     ]
-
     assert len(changes) == 1
-    boundary_index = changes[0]
-    assert report.amounts[boundary_index] <= Decimal("4000") <= report.amounts[boundary_index + 1]
+    return changes[0]
+
+
+@pytest.mark.parametrize(
+    ("fixed_fee", "crossing"),
+    [("40", Decimal("4000")), ("80", Decimal("8000"))],
+    ids=["fee=40", "fee=80"],
+)
+def test_pure_cost_boundary_brackets_the_known_analytic_answer(
+    fixed_fee: str, crossing: Decimal
+) -> None:
+    report = _analyze(fixed_fee=fixed_fee, amount_samples=_FINE_SAMPLES)
+
+    boundary_index = _pure_cost_boundary(report)
+    below = report.amounts[boundary_index]
+    above = report.amounts[boundary_index + 1]
+
+    assert below <= crossing <= above
+    # The bracket must be one sampling step. Without this a map that reported a
+    # single change far from the crossing would still satisfy the check above
+    # whenever the surrounding samples happened to straddle it.
+    assert above / below < _SAMPLE_RATIO
+
+    pure_cost_row = report.grid[-1]
     assert pure_cost_row[boundary_index][1] == ("SpreadHeavy",)
     assert pure_cost_row[boundary_index + 1][1] == ("FlatFee",)
     assert any("sampled, not exact" in caveat for caveat in report.caveats)
     assert any("properties of the model" in caveat for caveat in report.caveats)
+
+
+def test_pure_cost_boundary_moves_when_the_fixed_fee_doubles() -> None:
+    # Each case above passes for an implementation that pins the boundary to a
+    # plausible but fee-independent position. Doubling F must move A = F / s
+    # from 4000 to 8000, so the boundary index has to move with it.
+    cheap = _pure_cost_boundary(_analyze(fixed_fee="40", amount_samples=_FINE_SAMPLES))
+    dear = _pure_cost_boundary(_analyze(fixed_fee="80", amount_samples=_FINE_SAMPLES))
+
+    assert dear > cheap
 
 
 def test_builds_once_per_amount_not_once_per_grid_cell(monkeypatch) -> None:

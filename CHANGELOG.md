@@ -15,9 +15,11 @@ All notable user-visible changes are recorded here. The project follows
   terminal renders one coloured character per route signature with a legend;
   the self-contained Web view uses the existing `--series-N` palette in both
   themes and is deep-linkable with `view=regime`;
-- regression coverage for a known analytic crossing, deterministic graph-build
-  counts, four-neighbour connectivity, the API worker-thread boundary, CLI
-  output, deep links, and the AI payload contract.
+- regression coverage for a known analytic crossing at two fixed-fee levels, so
+  the sampled boundary has to move with the fee rather than merely land
+  somewhere plausible, plus deterministic graph-build counts, four-neighbour
+  connectivity, the API worker-thread boundary, CLI output, deep links, and the
+  AI payload contract.
 
 ### Changed
 
@@ -25,6 +27,11 @@ All notable user-visible changes are recorded here. The project follows
   immutable router for every cost/time weight. The default 12-by-61 grid
   therefore performs 12 graph builds, not 732; the actual count is disclosed
   by the CLI, API, and console;
+- the terminal grid merges consecutive cost weights whose rows are identical
+  and labels the merged band with its weight range, matching how `sensitivity`
+  and `breakeven` compress their axes. The default 61 weights are all still
+  sampled; a map with one region now prints one row instead of 61, and the
+  footer reports both counts;
 - regime boundaries are described only as lying between adjacent sampled
   amounts or weights. No interpolation or smoothing is applied, each amount is
   quoted independently, and boundaries driven by scenario-assumption fees are
