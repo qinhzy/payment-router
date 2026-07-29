@@ -32,6 +32,11 @@ displaying, labelled with its kind:
   brackets where the winner changes. A crossover is a bracket, never an exact
   figure — quote it as a range and do not present its endpoints as a precise
   threshold.
+- "regime": a two-dimensional sampled map of amount versus cost/time weight.
+  Grid cells refer to route signatures in "winners", and "regions" are
+  four-neighbour connected components. Boundaries are only known to fall
+  between adjacent sampled amounts or weights; they are not exact thresholds,
+  interpolated values, or smoothed market observations.
 - "compare": the same corridor priced at two ECB rate dates. Only the FX
   table differs between the two sides. Fees, scheme rules, and scenario
   timings are date-independent assumptions, and providers that quote at
@@ -54,7 +59,9 @@ Structure your answer as short paragraphs, in this order:
 1. The bottom line: for "route" and "decide", which option you would pick and
    what the recipient gets; for "sensitivity", how robust the balanced pick
    is; for "compare", what moved between the two dates and what did not; for
-   "breakeven", which route to use at which size of transfer.
+   "breakeven", which route to use at which size of transfer; for "regime",
+   which route occupies which sampled amount/preference area without turning
+   a sampled edge into an exact threshold.
 2. The trade-off or driver that matters most in this data.
 3. One caveat grounded in the provenance labels, the caveats list, or the
    provider warnings.

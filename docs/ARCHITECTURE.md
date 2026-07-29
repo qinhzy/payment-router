@@ -156,6 +156,32 @@ bracket alongside the figure and says so, and it flags when the fees producing
 a crossing are scenario assumptions — in that case the boundary is a property
 of the model, not a measured market fact.
 
+## Two-dimensional regime analysis
+
+`regime.py` combines the amount and preference axes, whose costs are
+deliberately asymmetric. A quote depends on the amount being quoted, so the
+outer amount loop builds one fresh routing session per geometric sample. A
+preference changes only the scoring of an already-built graph, so the inner
+cost-weight loop repeatedly calls `find_route` on that same router. For `N`
+amount samples and `M` weight intervals, the grid contains `N * (M + 1)`
+observations but performs exactly `N` graph builds.
+
+The map is weight-major when returned: each row is one cost weight and each
+column is one independently quoted amount. A cell stores the winning route's
+currency-path/network signature, or remains empty when no route exists.
+Four-neighbour flood fill labels connected components of equal signatures;
+diagonal contact alone does not join two regions.
+
+Every cell is an observation, not an estimate of the space around it. Along
+the amount axis a boundary is only known to fall between adjacent quoted
+amounts; along the preference axis it is only known to fall between adjacent
+weights. The CLI and Web API disclose the sample coordinates and actual build
+count, and the console draws the observed rectangles directly without
+interpolation or smoothing. Each amount remains an independent quote round.
+When an `ESTIMATED` scenario fee drives a region edge, that edge is a property
+of the model rather than a measured market fact. The analysis introduces no
+new rates, fees, timing claims, or provenance records.
+
 ## Historical comparison
 
 `comparison.py` prices one corridor under two ECB rate dates. Only the FX
@@ -203,13 +229,17 @@ always agree on routing behavior and error messages.
 - `cli.py` renders Rich tables, panels, and Mermaid source in the terminal.
 - `web/app.py` is a FastAPI application (optional `web` extra) exposing
   `/api/meta`, `/api/route`, `/api/decide`, `/api/sensitivity`,
-  `/api/compare`, `/api/breakeven`, and `/api/sources`, and serving the static single-page console from
-  `web/static/`. JSON amounts reuse the exact CLI formatting helpers, so both
-  frontends display identical numbers.
+  `/api/compare`, `/api/breakeven`, `/api/regime`, and `/api/sources`, and
+  serving the static single-page console from `web/static/`. JSON amounts reuse
+  the exact CLI formatting helpers, so both frontends display identical
+  numbers.
 - A preference sweep runs `steps + 1` route selections with no awaits between
   them, so `/api/sensitivity` runs the analysis in a worker thread instead of
   inline. The router and its graph are read-only during the sweep, and the
   event loop stays free to serve other requests.
+- `/api/regime` runs the full analysis in a worker-owned event loop. Its
+  asynchronous amount builds and nested CPU-bound weight sweeps therefore
+  cannot monopolize FastAPI's serving loop.
 - The web app keeps a short-lived cache of built routing sessions (default
   60 seconds, keyed by source, target, and amount) so switching preference or
   top-N reuses the same quotes instead of re-querying live providers. Only

@@ -22,6 +22,10 @@
 - 盈亏平衡分析：`remit breakeven` 沿金额轴扫描，定位最优路由发生切换的金额
   区间；采用几何采样 + 二分定位，避免为精度付出等比例的报价请求；交叉点一律
   以区间而非确定值呈现
+- 二维区域分析：`remit regime` 同时扫描金额与成本/时效权重；金额列采用几何
+  采样且每列独立建图，列内全部权重复用同一个 router，因此实际建图次数严格
+  等于金额样本数；相同路由签名的四邻接格子汇总为连通区域，边界只存在于相邻
+  采样点之间，不插值、不平滑
 - 可选 AI 解读：仅在 Anthropic 凭证可解析时启用；解读必须严格基于控制台
   展示的 JSON，保留教学模拟器免责声明，不得编造数字
 - 不做用户系统
@@ -46,6 +50,8 @@
 - `src/payment_router/core/fx.py`：可插拔 FX 汇率源（冻结教学表 + ECB 实时快照）
 - `src/payment_router/core/graph.py`：从 networks 构造 `networkx` 图
 - `src/payment_router/router.py`：路由算法
+- `src/payment_router/analysis.py`：分析模块共享的路由签名
+- `src/payment_router/regime.py`：金额 × 成本/时效权重二维区域扫描
 - `src/payment_router/service.py`：CLI 与 Web 共享的请求校验与路由会话服务层
 - `src/payment_router/provenance.py`：可审计的数据来源与假设注册表
 - `src/payment_router/visualizer.py`：Mermaid 输出与共享数字格式化

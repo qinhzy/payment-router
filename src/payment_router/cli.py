@@ -15,7 +15,7 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
-from payment_router import breakeven, comparison, sensitivity, service
+from payment_router import breakeven, comparison, regime, sensitivity, service
 from payment_router.core import fx
 from payment_router.decision import (
     DecisionProfile,
@@ -480,6 +480,157 @@ def breakeven_command(
         Panel(
             "\n".join(f"• {caveat}" for caveat in report.caveats),
             title=f"What this does and does not show ({report.builds} quote rounds)",
+            border_style="yellow",
+        )
+    )
+
+
+@app.command("regime")
+def regime_command(
+    from_currency: Annotated[str, typer.Argument(help="Source currency code.")],
+    to_currency: Annotated[str, typer.Argument(help="Target currency code.")],
+    min_amount: Annotated[str, typer.Option("--min", help="Smallest amount to test.")] = "10",
+    max_amount: Annotated[str, typer.Option("--max", help="Largest amount to test.")] = "100000",
+    amount_samples: Annotated[
+        int,
+        typer.Option(
+            "--amount-samples",
+            min=2,
+            max=40,
+            help="Geometrically spaced amount columns.",
+        ),
+    ] = regime.DEFAULT_AMOUNT_SAMPLES,
+    weight_steps: Annotated[
+        int,
+        typer.Option(
+            "--weight-steps",
+            min=10,
+            max=400,
+            help="Intervals across the cost/time weight axis.",
+        ),
+    ] = regime.DEFAULT_WEIGHT_STEPS,
+    fx_mode: Annotated[FxMode | None, _FX_OPTION] = None,
+) -> None:
+    """Map the winning route across amount and cost/time preference."""
+    _activate_fx(fx_mode)
+    try:
+        report = asyncio.run(
+            regime.analyze(
+                from_currency,
+                to_currency,
+                _instantiate_networks,
+                min_amount=service.parse_amount(min_amount),
+                max_amount=service.parse_amount(max_amount),
+                amount_samples=amount_samples,
+                weight_steps=weight_steps,
+            )
+        )
+    except (RoutingRequestError, ValueError) as error:
+        _print_error(str(error))
+        raise typer.Exit(code=1) from None
+
+    if not report.winners:
+        _print_error(
+            f"No route found from {report.source_currency} to "
+            f"{report.target_currency} in any sampled cell."
+        )
+        raise typer.Exit(code=1)
+
+    symbols = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+    colors = (
+        "cyan",
+        "green",
+        "magenta",
+        "yellow",
+        "bright_green",
+        "bright_red",
+        "bright_blue",
+        "red",
+    )
+    winner_styles = {
+        winner.signature: (
+            symbols[index] if index < len(symbols) else "?",
+            colors[index] if index < len(colors) else "white",
+        )
+        for index, winner in enumerate(report.winners)
+    }
+
+    table = Table(
+        title=(
+            f"Regime map · {report.source_currency} → {report.target_currency} · "
+            "x = amount (log), y = cost weight"
+        ),
+        header_style="bold white",
+        show_lines=False,
+    )
+    table.add_column("α", justify="right", no_wrap=True)
+    for index in range(len(report.amounts)):
+        table.add_column(str(index + 1), justify="center", no_wrap=True)
+
+    # Collapse consecutive weights that produce an identical row. The default
+    # 60 steps would otherwise print 61 near-identical lines for a map whose
+    # entire content is often a single region, which scrolls off any terminal.
+    # `sensitivity` and `breakeven` compress their axes the same way. Every
+    # weight is still sampled; only the display is merged.
+    runs: list[tuple[int, int]] = []
+    for weight_index in range(len(report.cost_weights) - 1, -1, -1):
+        if runs and report.grid[runs[-1][1]] == report.grid[weight_index]:
+            runs[-1] = (runs[-1][0], weight_index)
+        else:
+            runs.append((weight_index, weight_index))
+
+    for high_index, low_index in runs:
+        high = report.cost_weights[high_index]
+        low = report.cost_weights[low_index]
+        label = f"{high:.2f}" if high_index == low_index else f"{low:.2f}–{high:.2f}"
+        cells: list[Text | str] = [label]
+        for signature in report.grid[high_index]:
+            if signature is None:
+                cells.append(Text("·", style="dim"))
+                continue
+            symbol, color = winner_styles[signature]
+            cells.append(Text(symbol, style=f"bold {color}"))
+        table.add_row(*cells)
+    console.print(table)
+    console.print(
+        f"{len(report.cost_weights)} sampled cost weights, "
+        f"shown as {len(runs)} distinct row{'' if len(runs) == 1 else 's'}; "
+        "identical neighbours are merged.",
+        style="dim",
+    )
+
+    amount_key = " · ".join(
+        f"{index + 1}={format_amount(amount)}" for index, amount in enumerate(report.amounts)
+    )
+    console.print(
+        Panel(
+            amount_key,
+            title=f"Amount samples ({report.source_currency}, logarithmic spacing)",
+            border_style="blue",
+        )
+    )
+
+    legend = Table(
+        title=f"Legend · {len(report.regions)} connected regions",
+        header_style="bold white",
+    )
+    legend.add_column("Key", justify="center")
+    legend.add_column("Path", style="cyan")
+    legend.add_column("Networks")
+    for winner in report.winners:
+        symbol, color = winner_styles[winner.signature]
+        path, networks = winner.signature
+        legend.add_row(
+            Text(symbol, style=f"bold {color}"),
+            " → ".join(path),
+            ", ".join(dict.fromkeys(networks)),
+        )
+    console.print(legend)
+
+    console.print(
+        Panel(
+            "\n".join(f"• {caveat}" for caveat in report.caveats),
+            title=f"Sampling caveats ({report.builds} graph builds)",
             border_style="yellow",
         )
     )

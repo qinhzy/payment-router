@@ -40,6 +40,7 @@ uv run remit decide USD CNY 1000
 uv run remit sensitivity USD CNY 1000
 uv run remit compare USD CNY 1000 --on 2024-01-02
 uv run remit breakeven USD CNY --min 10 --max 100000
+uv run remit regime USD CNY --min 10 --max 100000 --amount-samples 12 --weight-steps 60
 uv run remit route HKD CNY 10000 --top-n=3
 uv run remit route EUR EUR 1000 --top-n=3
 uv run remit sources
@@ -52,7 +53,8 @@ profiles against the same graph. `sensitivity` sweeps the cost/time weight and
 shows exactly where the winning route flips. `compare` prices one corridor at
 two ECB rate dates and reports what the rate regime alone changed.
 `breakeven` sweeps the amount instead, showing which route wins at which size
-and where the winner flips.
+and where the winner flips. `regime` combines the amount and preference axes
+into one sampled map and summarizes four-neighbour connected winner regions.
 
 ## Web console
 
@@ -77,6 +79,10 @@ the same routing engine the CLI uses:
 - a **Sensitivity** view: a regime strip showing which route wins as the
   cost/time weight sweeps from all-time to all-cost, per-route timing range
   bars, a balanced-stability note, and qualitative timing caveats;
+- a **Regime map** view: a two-dimensional sampled area chart with logarithmic
+  amount on the horizontal axis and cost weight 0–1 on the vertical axis,
+  plus route and connected-region legends. It uses the same self-contained
+  palette in light and dark themes and never fills unsampled cells;
 - shareable URLs (every query updates the address bar and can be bookmarked or
   sent; the back button restores previous results) and recent-search chips;
 - a short-lived quote session cache so switching preference or top-N reuses
@@ -105,7 +111,7 @@ override. The API surface is `POST /api/explain` (server-sent events).
 
 The JSON API behind it is documented at `/api/docs` (`/api/meta`, `/api/route`,
 `/api/decide`, `/api/sensitivity`, `/api/compare`, `/api/breakeven`,
-`/api/sources`). The console is a local tool, not a deployment
+`/api/regime`, `/api/sources`). The console is a local tool, not a deployment
 target: it adds no authentication, persistence, or payment initiation surface.
 
 ## What is implemented
@@ -137,6 +143,12 @@ target: it adds no authentication, persistence, or payment initiation surface.
   dominates large ones. Coarse geometric sampling plus bisection locates a
   crossing precisely without a provider request per unit of precision, and
   the result is always a bracket rather than a single figure.
+- **Two-dimensional regime analysis:** `remit regime` samples geometric amount
+  columns and cost/time-weight rows together. Each amount builds one graph and
+  every weight in that column reuses it, so graph builds equal amount samples,
+  not grid cells. Equal route signatures are summarized into four-neighbour
+  connected regions; every boundary remains a sampled interval rather than an
+  interpolated threshold.
 - **Timing ranges and sensitivity:** every hop carries a `[min, max]` time
   window (SEPA scheme-maximum semantics plus registered SWIFT and CIPS
   scenario bands), routes aggregate them into displayed ranges, and
@@ -149,7 +161,7 @@ target: it adds no authentication, persistence, or payment initiation surface.
 - **Web console:** optional FastAPI backend plus a dependency-free single-page
   frontend sharing the CLI's routing service layer (`remit serve`).
 - **Quality:** Python 3.11-3.13 CI, strict pytest configuration, expanded Ruff
-  rules, package-build validation, and 278 automated tests.
+  rules, package-build validation, and 296 automated tests.
 
 ## Quick start
 
@@ -203,6 +215,8 @@ src/payment_router/
 |   |-- fx.py          # pluggable FX sources (frozen table / live ECB)
 |   `-- graph.py       # concurrent MultiDiGraph construction
 |-- router.py          # single-route and edge-distinct top-N routing
+|-- analysis.py        # shared route signatures for analysis modules
+|-- regime.py          # sampled amount x preference connected regions
 |-- decision.py        # cheapest/fastest/balanced comparison
 |-- provenance.py      # auditable evidence registry
 |-- service.py         # shared request/session layer for CLI and web
@@ -232,6 +246,9 @@ The detailed algorithm, invariants, and boundaries are documented in
 - Wise delivery estimates for an already funded balance can understate the time
   of later hops in a simulated multi-hop route.
 - SEPA, SWIFT, and CIPS fees are scenario assumptions, not bank tariffs.
+- Break-even and regime boundaries are sampling results. They are only known
+  to fall between adjacent tested amounts or weights and are never smoothed
+  into exact market thresholds.
 - CIPS is modelled only for CNY-target corridors. Its two-hop default is a
   teaching abstraction, and the published operating window is not an
   end-to-end delivery promise.
@@ -249,7 +266,8 @@ The detailed algorithm, invariants, and boundaries are documented in
   (shipped).
 - **v0.7:** historical comparison without turning the simulator into an online
   payment service (shipped).
-- **v0.8:** break-even analysis across the amount axis (this release).
+- **v0.8:** break-even analysis across the amount axis (shipped).
+- **v0.9:** two-dimensional amount × preference regime maps (this release).
 
 ## Contributing and security
 

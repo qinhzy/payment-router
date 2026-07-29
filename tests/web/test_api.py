@@ -74,6 +74,20 @@ def test_meta_reports_currencies_networks_and_profiles() -> None:
     assert payload["fx"]["fallback"] is False
 
 
+def test_console_assets_include_the_deep_linkable_regime_view() -> None:
+    client = _client()
+
+    index = client.get("/").text
+    javascript = client.get("/app.js").text
+    stylesheet = client.get("/styles.css").text
+
+    assert 'id="regime-button"' in index
+    assert '"/api/regime"' in javascript
+    assert "renderRegime" in javascript
+    assert '"regime"].includes(view)' in javascript
+    assert ".regime-map-plot" in stylesheet
+
+
 def test_route_returns_single_route_with_amounts_and_mermaid() -> None:
     response = _client().get(
         "/api/route",
@@ -657,6 +671,137 @@ def test_breakeven_returns_regions_and_crossovers() -> None:
 def test_breakeven_rejects_an_inverted_range() -> None:
     response = _client().get(
         "/api/breakeven",
+        params={"source": "USD", "target": "CNY", "min": "1000", "max": "10"},
+    )
+
+    assert response.status_code == 400
+
+
+class _RegimeFactory:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def __call__(self) -> list[PaymentNetwork]:
+        from decimal import Decimal
+
+        from payment_router.core import fx as fx_module
+        from payment_router.core.models import NetworkQuote
+
+        self.calls += 1
+
+        class Rail(PaymentNetwork):
+            def __init__(self, name: str, fixed: str, spread: str) -> None:
+                self._name = name
+                self._fixed = Decimal(fixed)
+                self._spread = Decimal(spread)
+
+            def display_name(self) -> str:
+                return self._name
+
+            def supported_currencies(self) -> set[str]:
+                return {"USD", "CNY"}
+
+            def get_quote(self, amount, source, target):
+                if source == target:
+                    return None
+                return NetworkQuote(
+                    network_name=self._name,
+                    fee_usd=self._fixed,
+                    time_hours=Decimal("24"),
+                    fx_rate=fx_module.get_mid_rate(source, target) * (Decimal("1") - self._spread),
+                    data_source=DataSource.ESTIMATED,
+                )
+
+        return [Rail("FlatFee", "40", "0"), Rail("SpreadHeavy", "0", "0.01")]
+
+
+def test_regime_returns_a_sampled_grid_regions_and_exact_build_count() -> None:
+    factory = _RegimeFactory()
+    client = _client(factory)
+    baseline = factory.calls
+
+    response = client.get(
+        "/api/regime",
+        params={
+            "source": "USD",
+            "target": "CNY",
+            "min": "100",
+            "max": "100000",
+            "amount_samples": 7,
+            "weight_steps": 10,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["builds"] == 7
+    assert factory.calls - baseline == 7
+    assert len(payload["amounts"]) == 7
+    assert len(payload["cost_weights"]) == 11
+    assert len(payload["grid"]) == 11
+    assert all(len(row) == 7 for row in payload["grid"])
+    assert sum(region["cell_count"] for region in payload["regions"]) == 77
+
+    winners = {winner["id"]: winner["signature"]["networks"] for winner in payload["winners"]}
+    pure_cost_row = payload["grid"][-1]
+    changes = [
+        index
+        for index, (below, above) in enumerate(zip(pure_cost_row, pure_cost_row[1:], strict=False))
+        if below != above
+    ]
+    assert len(changes) == 1
+    boundary_index = changes[0]
+    assert (
+        float(payload["amounts"][boundary_index])
+        <= 4000
+        <= float(payload["amounts"][boundary_index + 1])
+    )
+    assert winners[pure_cost_row[boundary_index]] == ["SpreadHeavy"]
+    assert winners[pure_cost_row[boundary_index + 1]] == ["FlatFee"]
+    assert any("sampled, not exact" in caveat for caveat in payload["caveats"])
+
+
+def test_regime_runs_off_the_event_loop(monkeypatch) -> None:
+    import threading
+
+    from payment_router import regime as regime_module
+    from payment_router.web import app as app_module
+    from payment_router.web import schemas as schemas_module
+
+    recorded: dict[str, str] = {}
+    analyze = regime_module.analyze
+    to_json = schemas_module.regime_to_json
+
+    async def recording_analyze(*args, **kwargs):
+        recorded["analysis"] = threading.current_thread().name
+        return await analyze(*args, **kwargs)
+
+    def recording_to_json(*args, **kwargs):
+        recorded["endpoint"] = threading.current_thread().name
+        return to_json(*args, **kwargs)
+
+    monkeypatch.setattr(app_module.regime, "analyze", recording_analyze)
+    monkeypatch.setattr(app_module.schemas, "regime_to_json", recording_to_json)
+
+    response = _client(_RegimeFactory()).get(
+        "/api/regime",
+        params={
+            "source": "USD",
+            "target": "CNY",
+            "min": "100",
+            "max": "10000",
+            "amount_samples": 3,
+            "weight_steps": 10,
+        },
+    )
+
+    assert response.status_code == 200
+    assert recorded["analysis"] != recorded["endpoint"]
+
+
+def test_regime_rejects_an_inverted_range() -> None:
+    response = _client().get(
+        "/api/regime",
         params={"source": "USD", "target": "CNY", "min": "1000", "max": "10"},
     )
 
