@@ -16,6 +16,7 @@ from payment_router.comparison import ComparisonReport, ComparisonSide
 from payment_router.core.models import DataSource, Hop, Route
 from payment_router.decision import DecisionTradeoff, RouteDecision
 from payment_router.provenance import ProvenanceRecord
+from payment_router.regime import ConnectedRegion, RegimeMap
 from payment_router.sensitivity import SensitivityReport, WeightRegion
 from payment_router.service import BuildWarning
 from payment_router.visualizer import (
@@ -188,6 +189,70 @@ def breakeven_to_json(report: BreakevenReport) -> dict[str, object]:
         },
         "regions": [amount_region_to_json(region) for region in report.regions],
         "crossovers": [crossover_to_json(crossover) for crossover in report.crossovers],
+        "builds": report.builds,
+        "caveats": list(report.caveats),
+    }
+
+
+def connected_region_to_json(
+    region: ConnectedRegion,
+    report: RegimeMap,
+    winner_id: int,
+) -> dict[str, object]:
+    return {
+        "id": region.region_id,
+        "winner_id": winner_id,
+        "cell_count": region.cell_count,
+        "sampled_amount_start": format_amount(report.amounts[region.amount_index_start]),
+        "sampled_amount_end": format_amount(report.amounts[region.amount_index_end]),
+        "sampled_cost_weight_start": round(
+            report.cost_weights[region.weight_index_start],
+            4,
+        ),
+        "sampled_cost_weight_end": round(
+            report.cost_weights[region.weight_index_end],
+            4,
+        ),
+    }
+
+
+def regime_to_json(report: RegimeMap) -> dict[str, object]:
+    winner_ids = {winner.signature: index for index, winner in enumerate(report.winners)}
+    return {
+        "request": {
+            "source": report.source_currency,
+            "target": report.target_currency,
+            "min_amount": format_amount(report.min_amount),
+            "max_amount": format_amount(report.max_amount),
+            "amount_samples": report.amount_samples,
+            "weight_steps": report.weight_steps,
+        },
+        "amounts": [format_amount(amount) for amount in report.amounts],
+        "cost_weights": [round(weight, 4) for weight in report.cost_weights],
+        # Compact IDs keep the default grid small enough for the optional AI
+        # payload. Signatures live once in ``winners`` and cells refer to them.
+        "grid": [
+            [winner_ids[cell] if cell is not None else None for cell in row] for row in report.grid
+        ],
+        "region_grid": [list(row) for row in report.region_grid],
+        "winners": [
+            {
+                "id": winner_ids[winner.signature],
+                "signature": {
+                    "path": list(winner.signature[0]),
+                    "networks": list(winner.signature[1]),
+                },
+            }
+            for winner in report.winners
+        ],
+        "regions": [
+            connected_region_to_json(
+                region,
+                report,
+                winner_ids[region.signature],
+            )
+            for region in report.regions
+        ],
         "builds": report.builds,
         "caveats": list(report.caveats),
     }

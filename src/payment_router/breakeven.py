@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import ROUND_HALF_EVEN, Decimal
 
+from payment_router.analysis import RouteSignature, route_signature
 from payment_router.core.models import DataSource, Route
 from payment_router.decision import DecisionProfile
 from payment_router.service import build_session, select_route_for_profile
@@ -26,8 +27,6 @@ from payment_router.service import build_session, select_route_for_profile
 DEFAULT_SAMPLES = 12
 DEFAULT_REFINE_STEPS = 6
 _CENT = Decimal("0.01")
-
-RouteSignature = tuple[tuple[str, ...], tuple[str, ...]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,11 +74,6 @@ class BreakevenReport:
     crossovers: tuple[Crossover, ...]
     builds: int
     caveats: tuple[str, ...]
-
-
-def route_signature(route: Route) -> RouteSignature:
-    path = (route.source_currency, *(hop.to_node for hop in route.hops))
-    return path, tuple(hop.network_name for hop in route.hops)
 
 
 def _quantize(amount: Decimal) -> Decimal:

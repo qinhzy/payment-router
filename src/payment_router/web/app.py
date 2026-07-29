@@ -19,7 +19,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from payment_router import breakeven, comparison, sensitivity, service
+from payment_router import breakeven, comparison, regime, sensitivity, service
 from payment_router.core import fx
 from payment_router.decision import DecisionProfile, build_decision_board, summarize_tradeoff
 from payment_router.networks.base import PaymentNetwork
@@ -75,7 +75,7 @@ def _default_explainer() -> Explainer | None:
 
 
 class ExplainRequest(BaseModel):
-    kind: Literal["route", "decide", "sensitivity", "compare", "breakeven"]
+    kind: Literal["route", "decide", "sensitivity", "compare", "breakeven", "regime"]
     data: dict[str, object]
     lang: str = Field(default="en", max_length=35)
 
@@ -479,6 +479,48 @@ def create_app(
                 ),
             )
         return schemas.breakeven_to_json(report)
+
+    @application.get("/api/regime")
+    async def regime_endpoint(
+        source: _CurrencyParam,
+        target: _CurrencyParam,
+        min_amount: Annotated[str, Query(alias="min", description="Smallest amount.")] = "10",
+        max_amount: Annotated[str, Query(alias="max", description="Largest amount.")] = "100000",
+        amount_samples: Annotated[int, Query(ge=2, le=40)] = regime.DEFAULT_AMOUNT_SAMPLES,
+        weight_steps: Annotated[int, Query(ge=10, le=400)] = regime.DEFAULT_WEIGHT_STEPS,
+    ) -> dict[str, object]:
+        # The amount loop performs asynchronous graph builds, while the nested
+        # weight sweep is CPU-bound. Run the complete private event loop in a
+        # worker so neither part can monopolize FastAPI's serving loop.
+        def run_analysis() -> regime.RegimeMap:
+            return asyncio.run(
+                regime.analyze(
+                    source,
+                    target,
+                    networks_factory,
+                    min_amount=service.parse_amount(min_amount),
+                    max_amount=service.parse_amount(max_amount),
+                    amount_samples=amount_samples,
+                    weight_steps=weight_steps,
+                )
+            )
+
+        try:
+            report = await asyncio.to_thread(run_analysis)
+        except service.RoutingRequestError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from None
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from None
+
+        if not report.winners:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"No route found from {report.source_currency} to "
+                    f"{report.target_currency} in any sampled cell."
+                ),
+            )
+        return schemas.regime_to_json(report)
 
     @application.post("/api/explain")
     async def explain(request: ExplainRequest) -> StreamingResponse:

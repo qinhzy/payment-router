@@ -3,6 +3,36 @@
 All notable user-visible changes are recorded here. The project follows
 [Semantic Versioning](https://semver.org/) while it approaches a stable API.
 
+## [0.9.0] - Unreleased
+
+### Added
+
+- a two-dimensional regime map across transfer amount and cost/time weight.
+  `remit regime SOURCE TARGET [--min A --max B] [--amount-samples N]
+  [--weight-steps M]`, `GET /api/regime`, and the console **Regime map** view
+  show the sampled combinations where each route signature wins;
+- four-neighbour connected-component summaries over the observed grid. The
+  terminal renders one coloured character per route signature with a legend;
+  the self-contained Web view uses the existing `--series-N` palette in both
+  themes and is deep-linkable with `view=regime`;
+- regression coverage for a known analytic crossing, deterministic graph-build
+  counts, four-neighbour connectivity, the API worker-thread boundary, CLI
+  output, deep links, and the AI payload contract.
+
+### Changed
+
+- the scan performs exactly one graph build per amount sample, then reuses that
+  immutable router for every cost/time weight. The default 12-by-61 grid
+  therefore performs 12 graph builds, not 732; the actual count is disclosed
+  by the CLI, API, and console;
+- regime boundaries are described only as lying between adjacent sampled
+  amounts or weights. No interpolation or smoothing is applied, each amount is
+  quoted independently, and boundaries driven by scenario-assumption fees are
+  labelled as properties of the model rather than measured market facts;
+- `sensitivity` and `breakeven` now share one route-signature primitive without
+  changing either module's existing public import surface. The regime analysis
+  introduces no rates, timings, fees, or provenance records.
+
 ## [0.8.0] - Unreleased
 
 ### Added

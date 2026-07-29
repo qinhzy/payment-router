@@ -12,6 +12,7 @@
   const routeButton = $("#route-button");
   const decideButton = $("#decide-button");
   const sensitivityButton = $("#sensitivity-button");
+  const regimeButton = $("#regime-button");
   const compareButton = $("#compare-button");
   const breakevenButton = $("#breakeven-button");
   const onDateInput = $("#on-date");
@@ -213,20 +214,35 @@
   function buttonForKind(kind) {
     if (kind === "compare") return compareButton;
     if (kind === "breakeven") return breakevenButton;
+    if (kind === "regime") return regimeButton;
     if (kind === "decide") return decideButton;
     if (kind === "sensitivity") return sensitivityButton;
     return routeButton;
   }
 
   function setBusy(busy, activeButton) {
-    [routeButton, decideButton, sensitivityButton, compareButton, breakevenButton].forEach((button) => {
+    [
+      routeButton,
+      decideButton,
+      sensitivityButton,
+      regimeButton,
+      compareButton,
+      breakevenButton,
+    ].forEach((button) => {
       button.disabled = busy;
     });
     if (busy) {
       activeButton.dataset.label = activeButton.textContent;
       activeButton.replaceChildren(svg('<span class="spinner"></span>'), document.createTextNode(" Working…"));
     } else {
-      [routeButton, decideButton, sensitivityButton, compareButton, breakevenButton].forEach((button) => {
+      [
+        routeButton,
+        decideButton,
+        sensitivityButton,
+        regimeButton,
+        compareButton,
+        breakevenButton,
+      ].forEach((button) => {
         if (button.dataset.label) {
           button.textContent = button.dataset.label;
           delete button.dataset.label;
@@ -297,7 +313,12 @@
     if (kind === "compare") {
       params.set("view", kind);
       params.set("on", request.on_date);
-    } else if (kind === "breakeven" || kind === "decide" || kind === "sensitivity") {
+    } else if (
+      kind === "breakeven" ||
+      kind === "decide" ||
+      kind === "sensitivity" ||
+      kind === "regime"
+    ) {
       params.set("view", kind);
     } else {
       params.set("profile", request.profile);
@@ -314,7 +335,9 @@
     if (!source || !target || !amount) return null;
     const view = params.get("view");
     return {
-      kind: ["decide", "sensitivity", "compare", "breakeven"].includes(view) ? view : "route",
+      kind: ["decide", "sensitivity", "compare", "breakeven", "regime"].includes(view)
+        ? view
+        : "route",
       on_date: params.get("on") || "",
       source: source.toUpperCase(),
       target: target.toUpperCase(),
@@ -418,6 +441,8 @@
                 ? `vs ${item.on_date || "a past date"}`
                 : item.kind === "breakeven"
                   ? "break-even"
+                  : item.kind === "regime"
+                    ? "regime map"
                   : item.profile
         )
       );
@@ -1088,6 +1113,139 @@
     resultsBox.replaceChildren(panel);
   }
 
+  /* ---------- two-dimensional regime rendering ---------- */
+
+  function renderRegime(data) {
+    const source = data.request.source;
+    const winnerById = new Map(data.winners.map((winner) => [winner.id, winner]));
+    const slotColor = (id) =>
+      id < 8 ? `var(--series-${id + 1})` : "var(--series-other)";
+
+    const panel = el("section", "panel");
+    const header = el("div", "panel-header");
+    header.append(el("h2", "", "Regime map"));
+    header.append(
+      el(
+        "span",
+        "hint",
+        `${data.builds} graph builds · ${data.amounts.length} amount columns · sampled cells only`
+      )
+    );
+    panel.append(header);
+
+    const wrap = el("div", "regime-map-wrap");
+    const layout = el("div", "regime-map-layout");
+    layout.append(el("div", "regime-map-y-title", "Cost weight α"));
+
+    const yAxis = el("div", "regime-map-y-axis");
+    yAxis.append(el("span", "", "1 · cost"));
+    yAxis.append(el("span", "", "0.5"));
+    yAxis.append(el("span", "", "0 · time"));
+    layout.append(yAxis);
+
+    const plot = el("div", "regime-map-plot");
+    plot.style.gridTemplateColumns = `repeat(${data.amounts.length}, minmax(12px, 1fr))`;
+    plot.style.gridTemplateRows =
+      `repeat(${data.cost_weights.length}, minmax(3px, 1fr))`;
+    plot.setAttribute(
+      "aria-label",
+      `Winning routes for ${data.request.source} to ${data.request.target} by amount and cost weight`
+    );
+
+    for (let weightIndex = data.cost_weights.length - 1; weightIndex >= 0; weightIndex -= 1) {
+      data.amounts.forEach((amount, amountIndex) => {
+        const winnerId = data.grid[weightIndex][amountIndex];
+        const regionId = data.region_grid[weightIndex][amountIndex];
+        const cell = el("span", `regime-map-cell${winnerId === null ? " no-route" : ""}`);
+        if (winnerId !== null) {
+          const winner = winnerById.get(winnerId);
+          cell.style.background = slotColor(winnerId);
+          cell.title =
+            `${fmtMoney(amount, source)} · cost weight ` +
+            `${data.cost_weights[weightIndex].toFixed(2)} · ` +
+            `${winner.signature.path.join(" → ")} via ` +
+            `${winner.signature.networks.join(", ")} · region ${regionId + 1}`;
+        } else {
+          cell.title =
+            `${fmtMoney(amount, source)} · cost weight ` +
+            `${data.cost_weights[weightIndex].toFixed(2)} · no route`;
+        }
+        plot.append(cell);
+      });
+    }
+    layout.append(plot);
+
+    const xAxis = el("div", "regime-map-x-axis");
+    xAxis.append(el("span", "", fmtMoney(data.amounts[0], source)));
+    xAxis.append(el("span", "", "Amount sent · logarithmic scale"));
+    xAxis.append(el("span", "", fmtMoney(data.amounts[data.amounts.length - 1], source)));
+    layout.append(xAxis);
+    wrap.append(layout);
+
+    const legend = el("div", "regime-legend regime-map-legend");
+    data.winners.forEach((winner) => {
+      const row = el("div", "legend-row");
+      const swatch = el("span", "dot");
+      swatch.style.background = slotColor(winner.id);
+      row.append(swatch);
+      row.append(el("span", "legend-path", winner.signature.path.join(" → ")));
+      row.append(
+        el(
+          "span",
+          "legend-meta",
+          [...new Set(winner.signature.networks)].join(", ")
+        )
+      );
+      legend.append(row);
+    });
+    wrap.append(legend);
+    panel.append(wrap);
+
+    const regionsHeader = el("div", "panel-header");
+    regionsHeader.append(el("h2", "", "Connected regions"));
+    regionsHeader.append(
+      el("span", "hint", "Four-neighbour cells with the same route signature")
+    );
+    panel.append(regionsHeader);
+
+    const regionRows = el("div", "regime-region-rows");
+    data.regions.forEach((region) => {
+      const winner = winnerById.get(region.winner_id);
+      const row = el("div", "regime-region-row");
+      const label = el("span", "regime-region-label");
+      const swatch = el("span", "dot");
+      swatch.style.background = slotColor(region.winner_id);
+      label.append(
+        swatch,
+        document.createTextNode(
+          `Region ${region.id + 1} · ${winner.signature.networks.join(", ")}`
+        )
+      );
+      row.append(label);
+      row.append(
+        el(
+          "span",
+          "regime-region-span",
+          `${fmtMoney(region.sampled_amount_start, source)}–` +
+            `${fmtMoney(region.sampled_amount_end, source)} · α ` +
+            `${region.sampled_cost_weight_start.toFixed(2)}–` +
+            `${region.sampled_cost_weight_end.toFixed(2)} · ` +
+            `${region.cell_count} cells`
+        )
+      );
+      regionRows.append(row);
+    });
+    panel.append(regionRows);
+
+    if (data.caveats && data.caveats.length > 0) {
+      const caveats = el("div", "caveat-rows");
+      data.caveats.forEach((caveat) => caveats.append(el("div", "", `⚠ ${caveat}`)));
+      panel.append(caveats);
+    }
+
+    resultsBox.replaceChildren(panel);
+  }
+
   /* ---------- sources rendering ---------- */
 
   function renderSources(records) {
@@ -1318,6 +1476,12 @@
           ? await apiGet("/api/decide", corridor, signal)
           : kind === "sensitivity"
             ? await apiGet("/api/sensitivity", corridor, signal)
+            : kind === "regime"
+              ? await apiGet(
+                  "/api/regime",
+                  { source: request.source, target: request.target },
+                  signal
+                )
             : kind === "compare"
               ? await apiGet("/api/compare", { ...corridor, on: request.on_date }, signal)
               : kind === "breakeven"
@@ -1333,6 +1497,8 @@
         renderDecisions(data);
       } else if (kind === "sensitivity") {
         renderSensitivity(data);
+      } else if (kind === "regime") {
+        renderRegime(data);
       } else if (kind === "compare") {
         renderComparison(data);
       } else if (kind === "breakeven") {
@@ -1368,6 +1534,7 @@
   sensitivityButton.addEventListener("click", () =>
     runRequest("sensitivity", sensitivityButton)
   );
+  regimeButton.addEventListener("click", () => runRequest("regime", regimeButton));
   breakevenButton.addEventListener("click", () => runRequest("breakeven", breakevenButton));
   compareButton.addEventListener("click", () => {
     if (!onDateInput.value) {

@@ -217,3 +217,11 @@ def test_system_prompt_forbids_reading_a_comparison_as_an_actual_past_cost() -> 
 
     assert "NOT a reconstruction" in SYSTEM_PROMPT
     assert "authoritative limits" in SYSTEM_PROMPT
+
+
+def test_system_prompt_describes_regime_boundaries_as_sampled() -> None:
+    from payment_router.web.ai import SYSTEM_PROMPT
+
+    assert '"regime"' in SYSTEM_PROMPT
+    assert "not exact thresholds" in SYSTEM_PROMPT
+    assert "adjacent sampled amounts or weights" in SYSTEM_PROMPT
