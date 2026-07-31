@@ -6,6 +6,7 @@
 
   const form = $("#route-form");
   const amountInput = $("#amount-input");
+  const amountError = $("#amount-error");
   const sourceSelect = $("#source-select");
   const targetSelect = $("#target-select");
   const swapButton = $("#swap-button");
@@ -325,6 +326,35 @@
       on_date: onDateInput.value,
     };
   }
+
+  function clearAmountError() {
+    amountInput.removeAttribute("aria-invalid");
+    amountError.textContent = "";
+    amountError.hidden = true;
+  }
+
+  function validateRequest(kind) {
+    if (kind === "regime" || kind === "breakeven") {
+      clearAmountError();
+      return true;
+    }
+
+    const rawAmount = amountInput.value.trim();
+    const decimalPattern = /^[+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
+    const amount = Number(rawAmount);
+    if (decimalPattern.test(rawAmount) && Number.isFinite(amount) && amount > 0) {
+      clearAmountError();
+      return true;
+    }
+
+    amountInput.setAttribute("aria-invalid", "true");
+    amountError.textContent = "Enter a finite amount greater than zero.";
+    amountError.hidden = false;
+    amountInput.focus();
+    return false;
+  }
+
+  amountInput.addEventListener("input", clearAmountError);
 
   /* ---------- sharable URL state ---------- */
 
@@ -1483,6 +1513,7 @@
   /* ---------- actions ---------- */
 
   async function runRequest(kind, activeButton) {
+    if (!validateRequest(kind)) return;
     const request = currentRequest();
     const run = beginRun();
     const signal = run.signal;

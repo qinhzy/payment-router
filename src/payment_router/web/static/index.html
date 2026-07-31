@@ -64,9 +64,11 @@
                 spellcheck="false"
                 value="1000"
                 aria-label="Amount to send"
+                aria-describedby="amount-error"
               />
               <select id="source-select" aria-label="Source currency"></select>
             </div>
+            <p class="field-error" id="amount-error" role="alert" hidden></p>
           </div>
 
           <div class="field">

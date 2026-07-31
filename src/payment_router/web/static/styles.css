@@ -370,6 +370,18 @@ main {
   box-shadow: 0 0 0 3px var(--accent-wash);
 }
 
+.amount-wrap:has(input[aria-invalid="true"]) {
+  border-color: var(--critical-text);
+  box-shadow: 0 0 0 3px var(--critical-wash);
+}
+
+.field-error {
+  margin: 0;
+  color: var(--critical-text);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .amount-wrap input {
   flex: 1;
   min-width: 0;
