@@ -86,6 +86,9 @@ def test_console_assets_include_the_deep_linkable_regime_view() -> None:
     assert "renderRegime" in javascript
     assert '"regime"].includes(view)' in javascript
     assert ".regime-map-plot" in stylesheet
+    assert 'id="results-context"' in index
+    assert "markResultsStale" in javascript
+    assert ".results-context" in stylesheet
 
 
 def test_route_returns_single_route_with_amounts_and_mermaid() -> None:

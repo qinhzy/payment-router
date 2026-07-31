@@ -1073,6 +1073,43 @@ main {
 
 /* ---------- results ---------- */
 
+.results-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--warning-text) 24%, var(--hairline));
+  border-radius: 12px;
+  background: var(--warning-wash);
+  color: var(--warning-text);
+}
+
+.results-context[hidden] {
+  display: none;
+}
+
+.results-context > div {
+  display: grid;
+  gap: 2px;
+}
+
+.results-context strong {
+  font-size: 13.5px;
+}
+
+.results-context span {
+  color: var(--ink-secondary);
+  font-size: 13px;
+}
+
+.results-context .button {
+  flex: none;
+  min-height: 34px;
+  border-color: color-mix(in srgb, var(--warning-text) 30%, var(--hairline));
+  background: var(--surface);
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -1089,6 +1126,17 @@ main {
   display: flex;
   flex-direction: column;
   gap: 20px;
+}
+
+@media (max-width: 620px) {
+  .results-context {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .results-context .button {
+    width: 100%;
+  }
 }
 
 .empty-state {

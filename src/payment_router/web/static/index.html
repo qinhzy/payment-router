@@ -168,6 +168,15 @@
       <section id="alerts" hidden></section>
       <section id="warnings" hidden></section>
       <p class="sr-only" id="results-status" role="status" aria-live="polite" aria-atomic="true"></p>
+      <section class="results-context" id="results-context" role="status" aria-live="polite" hidden>
+        <div>
+          <strong>Scenario changed</strong>
+          <span id="results-context-copy">Inputs changed. Results below still reflect the previous scenario.</span>
+        </div>
+        <button class="button button-ghost" id="rerun-button" type="button">
+          Refresh results
+        </button>
+      </section>
       <section class="results" id="results" aria-busy="false">
         <div class="empty-state">
           <span class="empty-route-icon" aria-hidden="true">
