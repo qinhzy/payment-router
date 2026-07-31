@@ -20,6 +20,7 @@
   const alertsBox = $("#alerts");
   const warningsBox = $("#warnings");
   const resultsBox = $("#results");
+  const resultsStatus = $("#results-status");
   const sourcesBox = $("#sources");
   const themeToggle = $("#theme-toggle");
   const scenarioSummary = $("#scenario-summary");
@@ -60,6 +61,7 @@
   };
 
   let aiMeta = null;
+  let resultsAnnouncementFrame = null;
 
   const networkSlots = new Map();
 
@@ -241,6 +243,38 @@
       card.append(line);
     });
     resultsBox.replaceChildren(card);
+  }
+
+  function announceResults(message) {
+    if (resultsAnnouncementFrame !== null) {
+      cancelAnimationFrame(resultsAnnouncementFrame);
+    }
+    resultsStatus.textContent = "";
+    resultsAnnouncementFrame = requestAnimationFrame(() => {
+      resultsStatus.textContent = message;
+      resultsAnnouncementFrame = null;
+    });
+  }
+
+  function completionMessage(kind, data) {
+    const countMessage = (count, singular) =>
+      `${count} ${singular}${count === 1 ? "" : "s"} shown.`;
+    if (kind === "decide") {
+      return `Profile comparison complete. ${countMessage(data.decisions?.length ?? 0, "profile")}`;
+    }
+    if (kind === "sensitivity") {
+      return `Sensitivity analysis complete. ${countMessage(data.regions?.length ?? 0, "preference region")}`;
+    }
+    if (kind === "regime") {
+      return `Regime map complete. ${countMessage(data.regions?.length ?? 0, "connected region")}`;
+    }
+    if (kind === "compare") {
+      return "Historical comparison complete. Baseline and selected rate date are shown.";
+    }
+    if (kind === "breakeven") {
+      return `Break-even analysis complete. ${countMessage(data.regions?.length ?? 0, "amount region")}`;
+    }
+    return `Route search complete. ${countMessage(data.routes?.length ?? 0, "candidate route")}`;
   }
 
   function buttonForKind(kind) {
@@ -1465,8 +1499,7 @@
     const body = el("div", "ai-body");
     body.hidden = true;
     const output = el("div", "ai-output");
-    // The results container is aria-live; opting the streamed output out
-    // stops screen readers re-announcing the whole text on every delta.
+    // Streamed narration remains opt-in so every token is not announced.
     output.setAttribute("aria-live", "off");
     const footer = el("div", "ai-footer");
     footer.hidden = true;
@@ -1554,6 +1587,7 @@
     clearFeedback();
     setBusy(true, activeButton);
     showSkeleton();
+    announceResults("Simulation in progress. Results will update when the calculation finishes.");
     try {
       const corridor = {
         source: request.source,
@@ -1599,6 +1633,7 @@
       decorateResults();
       saveRecent(kind, request);
       syncUrl(kind, request);
+      announceResults(completionMessage(kind, data));
     } catch (error) {
       // A superseded run is not a failure; the run that replaced it owns the view.
       if (isAbort(error)) return;
@@ -1648,6 +1683,7 @@
       setBusy(false);
       clearFeedback();
       resultsBox.replaceChildren(initialEmptyState);
+      announceResults("Results cleared. Choose a corridor to run another simulation.");
     }
   });
 
