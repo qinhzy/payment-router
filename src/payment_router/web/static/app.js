@@ -6,6 +6,7 @@
 
   const form = $("#route-form");
   const amountInput = $("#amount-input");
+  const amountError = $("#amount-error");
   const sourceSelect = $("#source-select");
   const targetSelect = $("#target-select");
   const swapButton = $("#swap-button");
@@ -19,7 +20,12 @@
   const alertsBox = $("#alerts");
   const warningsBox = $("#warnings");
   const resultsBox = $("#results");
+  const resultsStatus = $("#results-status");
   const sourcesBox = $("#sources");
+  const themeToggle = $("#theme-toggle");
+  const scenarioSummary = $("#scenario-summary");
+  const quickAmountButtons = [...document.querySelectorAll("[data-quick-amount]")];
+  const requestControls = [...form.querySelectorAll("input, select, button")];
 
   const CURRENCY_SYMBOLS = {
     USD: "$",
@@ -55,6 +61,7 @@
   };
 
   let aiMeta = null;
+  let resultsAnnouncementFrame = null;
 
   const networkSlots = new Map();
 
@@ -146,16 +153,41 @@
   /* ---------- theme ---------- */
 
   const THEME_KEY = "payment-router-theme";
-  const storedTheme = localStorage.getItem(THEME_KEY);
+  let storedTheme = null;
+  try {
+    storedTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    /* storage can be unavailable in private or hardened browser contexts */
+  }
   if (storedTheme === "dark" || storedTheme === "light") {
     document.documentElement.dataset.theme = storedTheme;
   }
-  $("#theme-toggle").addEventListener("click", () => {
+
+  function currentTheme() {
     const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    const current = document.documentElement.dataset.theme || (systemDark ? "dark" : "light");
+    return document.documentElement.dataset.theme || (systemDark ? "dark" : "light");
+  }
+
+  function syncThemeControl() {
+    const isDark = currentTheme() === "dark";
+    themeToggle.setAttribute("aria-pressed", String(isDark));
+    themeToggle.setAttribute(
+      "aria-label",
+      isDark ? "Switch to light theme" : "Switch to dark theme"
+    );
+  }
+
+  syncThemeControl();
+  themeToggle.addEventListener("click", () => {
+    const current = currentTheme();
     const next = current === "dark" ? "light" : "dark";
     document.documentElement.dataset.theme = next;
-    localStorage.setItem(THEME_KEY, next);
+    syncThemeControl();
+    try {
+      localStorage.setItem(THEME_KEY, next);
+    } catch {
+      /* the selected theme still applies for this page */
+    }
   });
 
   /* ---------- alerts, warnings, loading ---------- */
@@ -169,6 +201,7 @@
 
   function showError(message) {
     const alert = el("div", "alert alert-error");
+    alert.setAttribute("role", "alert");
     alert.append(svg(ICONS.error), el("span", "", message));
     alertsBox.replaceChildren(alert);
     alertsBox.hidden = false;
@@ -185,6 +218,7 @@
   function showWarnings(warnings) {
     if (!warnings || warnings.length === 0) return;
     const alert = el("div", "alert alert-warning");
+    alert.setAttribute("role", "status");
     const body = el("div");
     body.append(el("strong", "", "Some providers could not quote every corridor"));
     const visibleCount = 5;
@@ -211,6 +245,38 @@
     resultsBox.replaceChildren(card);
   }
 
+  function announceResults(message) {
+    if (resultsAnnouncementFrame !== null) {
+      cancelAnimationFrame(resultsAnnouncementFrame);
+    }
+    resultsStatus.textContent = "";
+    resultsAnnouncementFrame = requestAnimationFrame(() => {
+      resultsStatus.textContent = message;
+      resultsAnnouncementFrame = null;
+    });
+  }
+
+  function completionMessage(kind, data) {
+    const countMessage = (count, singular) =>
+      `${count} ${singular}${count === 1 ? "" : "s"} shown.`;
+    if (kind === "decide") {
+      return `Profile comparison complete. ${countMessage(data.decisions?.length ?? 0, "profile")}`;
+    }
+    if (kind === "sensitivity") {
+      return `Sensitivity analysis complete. ${countMessage(data.regions?.length ?? 0, "preference region")}`;
+    }
+    if (kind === "regime") {
+      return `Regime map complete. ${countMessage(data.regions?.length ?? 0, "connected region")}`;
+    }
+    if (kind === "compare") {
+      return "Historical comparison complete. Baseline and selected rate date are shown.";
+    }
+    if (kind === "breakeven") {
+      return `Break-even analysis complete. ${countMessage(data.regions?.length ?? 0, "amount region")}`;
+    }
+    return `Route search complete. ${countMessage(data.routes?.length ?? 0, "candidate route")}`;
+  }
+
   function buttonForKind(kind) {
     if (kind === "compare") return compareButton;
     if (kind === "breakeven") return breakevenButton;
@@ -221,16 +287,11 @@
   }
 
   function setBusy(busy, activeButton) {
-    [
-      routeButton,
-      decideButton,
-      sensitivityButton,
-      regimeButton,
-      compareButton,
-      breakevenButton,
-    ].forEach((button) => {
-      button.disabled = busy;
+    requestControls.forEach((control) => {
+      control.disabled = busy;
     });
+    form.setAttribute("aria-busy", String(busy));
+    resultsBox.setAttribute("aria-busy", String(busy));
     if (busy) {
       activeButton.dataset.label = activeButton.textContent;
       activeButton.replaceChildren(svg('<span class="spinner"></span>'), document.createTextNode(" Working…"));
@@ -302,6 +363,66 @@
     };
   }
 
+  function updateScenarioSummary() {
+    const amount = Number(amountInput.value.trim());
+    const amountLabel = Number.isFinite(amount) && amount > 0
+      ? amount.toLocaleString("en-US", { maximumFractionDigits: 2 })
+      : amountInput.value.trim() || "—";
+    const profile = PROFILE_LABELS[form.elements.profile.value] || "Balanced";
+    const candidateCount = form.elements.top_n.value;
+    const candidates = candidateCount === "1" ? "Best route" : `Top ${candidateCount} routes`;
+    scenarioSummary.textContent =
+      `${amountLabel} ${sourceSelect.value || "—"} → ${targetSelect.value || "—"}` +
+      ` · ${profile} · ${candidates}`;
+
+    quickAmountButtons.forEach((button) => {
+      const active =
+        Number.isFinite(amount) && amount === Number(button.dataset.quickAmount);
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", String(active));
+    });
+  }
+
+  function clearAmountError() {
+    amountInput.removeAttribute("aria-invalid");
+    amountError.textContent = "";
+    amountError.hidden = true;
+  }
+
+  function validateRequest(kind) {
+    if (kind === "regime" || kind === "breakeven") {
+      clearAmountError();
+      return true;
+    }
+
+    const rawAmount = amountInput.value.trim();
+    const decimalPattern = /^[+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
+    const amount = Number(rawAmount);
+    if (decimalPattern.test(rawAmount) && Number.isFinite(amount) && amount > 0) {
+      clearAmountError();
+      return true;
+    }
+
+    amountInput.setAttribute("aria-invalid", "true");
+    amountError.textContent = "Enter a finite amount greater than zero.";
+    amountError.hidden = false;
+    amountInput.focus();
+    return false;
+  }
+
+  amountInput.addEventListener("input", () => {
+    clearAmountError();
+    updateScenarioSummary();
+  });
+  form.addEventListener("change", updateScenarioSummary);
+  quickAmountButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      amountInput.value = button.dataset.quickAmount;
+      clearAmountError();
+      updateScenarioSummary();
+    });
+  });
+
   /* ---------- sharable URL state ---------- */
 
   function requestToParams(kind, request) {
@@ -362,6 +483,7 @@
       `input[name="top_n"][value="${CSS.escape(String(request.top_n))}"]`
     );
     if (topInput) topInput.checked = true;
+    updateScenarioSummary();
   }
 
   function syncUrl(kind, request) {
@@ -1377,8 +1499,7 @@
     const body = el("div", "ai-body");
     body.hidden = true;
     const output = el("div", "ai-output");
-    // The results container is aria-live; opting the streamed output out
-    // stops screen readers re-announcing the whole text on every delta.
+    // Streamed narration remains opt-in so every token is not announced.
     output.setAttribute("aria-live", "off");
     const footer = el("div", "ai-footer");
     footer.hidden = true;
@@ -1459,13 +1580,15 @@
   /* ---------- actions ---------- */
 
   async function runRequest(kind, activeButton) {
+    if (!validateRequest(kind)) return;
+    const request = currentRequest();
     const run = beginRun();
     const signal = run.signal;
     clearFeedback();
     setBusy(true, activeButton);
     showSkeleton();
+    announceResults("Simulation in progress. Results will update when the calculation finishes.");
     try {
-      const request = currentRequest();
       const corridor = {
         source: request.source,
         target: request.target,
@@ -1510,6 +1633,7 @@
       decorateResults();
       saveRecent(kind, request);
       syncUrl(kind, request);
+      announceResults(completionMessage(kind, data));
     } catch (error) {
       // A superseded run is not a failure; the run that replaced it owns the view.
       if (isAbort(error)) return;
@@ -1552,8 +1676,14 @@
       applyRequestToForm(request);
       runRequest(request.kind, buttonForKind(request.kind));
     } else {
+      if (activeRun) {
+        activeRun.abort();
+        activeRun = null;
+      }
+      setBusy(false);
       clearFeedback();
       resultsBox.replaceChildren(initialEmptyState);
+      announceResults("Results cleared. Choose a corridor to run another simulation.");
     }
   });
 
@@ -1561,6 +1691,7 @@
     const source = sourceSelect.value;
     sourceSelect.value = targetSelect.value;
     targetSelect.value = source;
+    updateScenarioSummary();
   });
 
   /* ---------- boot ---------- */
@@ -1580,6 +1711,7 @@
     );
     targetSelect.value =
       preferredTarget || currencies.find((code) => code !== sourceSelect.value) || currencies[0];
+    updateScenarioSummary();
   }
 
   async function boot() {
