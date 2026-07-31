@@ -22,6 +22,8 @@
   const resultsBox = $("#results");
   const sourcesBox = $("#sources");
   const themeToggle = $("#theme-toggle");
+  const scenarioSummary = $("#scenario-summary");
+  const quickAmountButtons = [...document.querySelectorAll("[data-quick-amount]")];
   const requestControls = [...form.querySelectorAll("input, select, button")];
 
   const CURRENCY_SYMBOLS = {
@@ -327,6 +329,26 @@
     };
   }
 
+  function updateScenarioSummary() {
+    const amount = Number(amountInput.value.trim());
+    const amountLabel = Number.isFinite(amount) && amount > 0
+      ? amount.toLocaleString("en-US", { maximumFractionDigits: 2 })
+      : amountInput.value.trim() || "—";
+    const profile = PROFILE_LABELS[form.elements.profile.value] || "Balanced";
+    const candidateCount = form.elements.top_n.value;
+    const candidates = candidateCount === "1" ? "Best route" : `Top ${candidateCount} routes`;
+    scenarioSummary.textContent =
+      `${amountLabel} ${sourceSelect.value || "—"} → ${targetSelect.value || "—"}` +
+      ` · ${profile} · ${candidates}`;
+
+    quickAmountButtons.forEach((button) => {
+      const active =
+        Number.isFinite(amount) && amount === Number(button.dataset.quickAmount);
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", String(active));
+    });
+  }
+
   function clearAmountError() {
     amountInput.removeAttribute("aria-invalid");
     amountError.textContent = "";
@@ -354,7 +376,19 @@
     return false;
   }
 
-  amountInput.addEventListener("input", clearAmountError);
+  amountInput.addEventListener("input", () => {
+    clearAmountError();
+    updateScenarioSummary();
+  });
+  form.addEventListener("change", updateScenarioSummary);
+  quickAmountButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      amountInput.value = button.dataset.quickAmount;
+      clearAmountError();
+      updateScenarioSummary();
+      amountInput.focus();
+    });
+  });
 
   /* ---------- sharable URL state ---------- */
 
@@ -416,6 +450,7 @@
       `input[name="top_n"][value="${CSS.escape(String(request.top_n))}"]`
     );
     if (topInput) topInput.checked = true;
+    updateScenarioSummary();
   }
 
   function syncUrl(kind, request) {
@@ -1621,6 +1656,7 @@
     const source = sourceSelect.value;
     sourceSelect.value = targetSelect.value;
     targetSelect.value = source;
+    updateScenarioSummary();
   });
 
   /* ---------- boot ---------- */
@@ -1640,6 +1676,7 @@
     );
     targetSelect.value =
       preferredTarget || currencies.find((code) => code !== sourceSelect.value) || currencies[0];
+    updateScenarioSummary();
   }
 
   async function boot() {
