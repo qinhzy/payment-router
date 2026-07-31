@@ -21,6 +21,8 @@
   const warningsBox = $("#warnings");
   const resultsBox = $("#results");
   const resultsStatus = $("#results-status");
+  const resultsContext = $("#results-context");
+  const rerunButton = $("#rerun-button");
   const sourcesBox = $("#sources");
   const themeToggle = $("#theme-toggle");
   const scenarioSummary = $("#scenario-summary");
@@ -62,6 +64,7 @@
 
   let aiMeta = null;
   let resultsAnnouncementFrame = null;
+  let lastSuccessfulRun = null;
 
   const networkSlots = new Map();
 
@@ -413,13 +416,18 @@
   amountInput.addEventListener("input", () => {
     clearAmountError();
     updateScenarioSummary();
+    markResultsStale();
   });
-  form.addEventListener("change", updateScenarioSummary);
+  form.addEventListener("change", () => {
+    updateScenarioSummary();
+    markResultsStale();
+  });
   quickAmountButtons.forEach((button) => {
     button.addEventListener("click", () => {
       amountInput.value = button.dataset.quickAmount;
       clearAmountError();
       updateScenarioSummary();
+      markResultsStale();
     });
   });
 
@@ -446,6 +454,34 @@
       params.set("top_n", request.top_n);
     }
     return params;
+  }
+
+  function resultSignature(kind, request) {
+    const fields = [kind, request.source, request.target];
+    if (!["regime", "breakeven"].includes(kind)) fields.push(request.amount);
+    if (kind === "route") fields.push(request.profile, request.top_n);
+    if (kind === "compare") fields.push(request.on_date);
+    return JSON.stringify(fields);
+  }
+
+  function setResultsStale(stale) {
+    resultsContext.hidden = !stale;
+    if (stale) {
+      resultsBox.setAttribute("aria-describedby", "results-context-copy");
+    } else {
+      resultsBox.removeAttribute("aria-describedby");
+    }
+  }
+
+  function markResultsStale() {
+    if (!lastSuccessfulRun) {
+      setResultsStale(false);
+      return;
+    }
+    const stale =
+      resultSignature(lastSuccessfulRun.kind, lastSuccessfulRun.request) !==
+      resultSignature(lastSuccessfulRun.kind, currentRequest());
+    setResultsStale(stale);
   }
 
   function requestFromUrl() {
@@ -1585,6 +1621,7 @@
     const run = beginRun();
     const signal = run.signal;
     clearFeedback();
+    setResultsStale(false);
     setBusy(true, activeButton);
     showSkeleton();
     announceResults("Simulation in progress. Results will update when the calculation finishes.");
@@ -1631,12 +1668,15 @@
       }
       appendAiPanel(kind, data, signal);
       decorateResults();
+      lastSuccessfulRun = { kind, request: { ...request } };
       saveRecent(kind, request);
       syncUrl(kind, request);
       announceResults(completionMessage(kind, data));
     } catch (error) {
       // A superseded run is not a failure; the run that replaced it owns the view.
       if (isAbort(error)) return;
+      lastSuccessfulRun = null;
+      setResultsStale(false);
       resultsBox.replaceChildren();
       showError(error instanceof Error ? error.message : "Unexpected error.");
     } finally {
@@ -1667,6 +1707,10 @@
     }
     runRequest("compare", compareButton);
   });
+  rerunButton.addEventListener("click", () => {
+    if (!lastSuccessfulRun) return;
+    runRequest(lastSuccessfulRun.kind, buttonForKind(lastSuccessfulRun.kind));
+  });
 
   const initialEmptyState = resultsBox.firstElementChild;
 
@@ -1682,6 +1726,8 @@
       }
       setBusy(false);
       clearFeedback();
+      lastSuccessfulRun = null;
+      setResultsStale(false);
       resultsBox.replaceChildren(initialEmptyState);
       announceResults("Results cleared. Choose a corridor to run another simulation.");
     }
@@ -1692,6 +1738,7 @@
     sourceSelect.value = targetSelect.value;
     targetSelect.value = source;
     updateScenarioSummary();
+    markResultsStale();
   });
 
   /* ---------- boot ---------- */
