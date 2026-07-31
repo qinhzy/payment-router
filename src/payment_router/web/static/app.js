@@ -20,6 +20,8 @@
   const warningsBox = $("#warnings");
   const resultsBox = $("#results");
   const sourcesBox = $("#sources");
+  const themeToggle = $("#theme-toggle");
+  const requestControls = [...form.querySelectorAll("input, select, button")];
 
   const CURRENCY_SYMBOLS = {
     USD: "$",
@@ -146,16 +148,41 @@
   /* ---------- theme ---------- */
 
   const THEME_KEY = "payment-router-theme";
-  const storedTheme = localStorage.getItem(THEME_KEY);
+  let storedTheme = null;
+  try {
+    storedTheme = localStorage.getItem(THEME_KEY);
+  } catch {
+    /* storage can be unavailable in private or hardened browser contexts */
+  }
   if (storedTheme === "dark" || storedTheme === "light") {
     document.documentElement.dataset.theme = storedTheme;
   }
-  $("#theme-toggle").addEventListener("click", () => {
+
+  function currentTheme() {
     const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    const current = document.documentElement.dataset.theme || (systemDark ? "dark" : "light");
+    return document.documentElement.dataset.theme || (systemDark ? "dark" : "light");
+  }
+
+  function syncThemeControl() {
+    const isDark = currentTheme() === "dark";
+    themeToggle.setAttribute("aria-pressed", String(isDark));
+    themeToggle.setAttribute(
+      "aria-label",
+      isDark ? "Switch to light theme" : "Switch to dark theme"
+    );
+  }
+
+  syncThemeControl();
+  themeToggle.addEventListener("click", () => {
+    const current = currentTheme();
     const next = current === "dark" ? "light" : "dark";
     document.documentElement.dataset.theme = next;
-    localStorage.setItem(THEME_KEY, next);
+    syncThemeControl();
+    try {
+      localStorage.setItem(THEME_KEY, next);
+    } catch {
+      /* the selected theme still applies for this page */
+    }
   });
 
   /* ---------- alerts, warnings, loading ---------- */
@@ -169,6 +196,7 @@
 
   function showError(message) {
     const alert = el("div", "alert alert-error");
+    alert.setAttribute("role", "alert");
     alert.append(svg(ICONS.error), el("span", "", message));
     alertsBox.replaceChildren(alert);
     alertsBox.hidden = false;
@@ -185,6 +213,7 @@
   function showWarnings(warnings) {
     if (!warnings || warnings.length === 0) return;
     const alert = el("div", "alert alert-warning");
+    alert.setAttribute("role", "status");
     const body = el("div");
     body.append(el("strong", "", "Some providers could not quote every corridor"));
     const visibleCount = 5;
@@ -221,16 +250,11 @@
   }
 
   function setBusy(busy, activeButton) {
-    [
-      routeButton,
-      decideButton,
-      sensitivityButton,
-      regimeButton,
-      compareButton,
-      breakevenButton,
-    ].forEach((button) => {
-      button.disabled = busy;
+    requestControls.forEach((control) => {
+      control.disabled = busy;
     });
+    form.setAttribute("aria-busy", String(busy));
+    resultsBox.setAttribute("aria-busy", String(busy));
     if (busy) {
       activeButton.dataset.label = activeButton.textContent;
       activeButton.replaceChildren(svg('<span class="spinner"></span>'), document.createTextNode(" Working…"));
@@ -1459,13 +1483,13 @@
   /* ---------- actions ---------- */
 
   async function runRequest(kind, activeButton) {
+    const request = currentRequest();
     const run = beginRun();
     const signal = run.signal;
     clearFeedback();
     setBusy(true, activeButton);
     showSkeleton();
     try {
-      const request = currentRequest();
       const corridor = {
         source: request.source,
         target: request.target,
@@ -1552,6 +1576,11 @@
       applyRequestToForm(request);
       runRequest(request.kind, buttonForKind(request.kind));
     } else {
+      if (activeRun) {
+        activeRun.abort();
+        activeRun = null;
+      }
+      setBusy(false);
       clearFeedback();
       resultsBox.replaceChildren(initialEmptyState);
     }

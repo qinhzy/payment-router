@@ -607,6 +607,17 @@ main {
   cursor: wait;
 }
 
+.control-grid[aria-busy="true"] .field,
+.control-grid[aria-busy="true"] .control-history {
+  opacity: 0.68;
+}
+
+.control-grid input:disabled,
+.control-grid select:disabled,
+.control-grid button:disabled {
+  cursor: wait;
+}
+
 .button-primary {
   background: var(--accent);
   color: #ffffff;
