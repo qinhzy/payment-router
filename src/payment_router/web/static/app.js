@@ -386,7 +386,6 @@
       amountInput.value = button.dataset.quickAmount;
       clearAmountError();
       updateScenarioSummary();
-      amountInput.focus();
     });
   });
 

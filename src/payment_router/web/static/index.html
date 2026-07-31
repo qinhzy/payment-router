@@ -144,7 +144,7 @@
             </span>
           </div>
         </form>
-        <div class="scenario-rail" aria-live="polite">
+        <div class="scenario-rail">
           <span class="scenario-icon" aria-hidden="true">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="5" cy="12" r="2.3" />
@@ -155,7 +155,7 @@
           </span>
           <div class="scenario-copy">
             <span>Current scenario</span>
-            <strong id="scenario-summary">1,000 USD → CNY · Balanced · Best route</strong>
+            <strong id="scenario-summary" aria-live="polite" aria-atomic="true">1,000 USD → CNY · Balanced · Best route</strong>
           </div>
           <div class="scenario-assurance">
             <strong>Evidence-first simulation</strong>
@@ -199,6 +199,45 @@
           </div>
         </div>
       </section>
+
+      <details class="panel reading-guide">
+        <summary>
+          <span>
+            <strong>How to read the ranking</strong>
+            <small>Three checks for a defensible route decision</small>
+          </span>
+          <span class="reading-guide-action">
+            <span class="reading-guide-open-label">Open guide</span>
+            <span class="reading-guide-close-label">Close guide</span>
+          </span>
+        </summary>
+        <div class="reading-guide-grid">
+          <article>
+            <span class="guide-index">01</span>
+            <div>
+              <strong>Start with the outcome</strong>
+              <p>Compare recipient amount, modeled all-in cost, and delivery range together—not a headline fee alone.</p>
+            </div>
+          </article>
+          <article>
+            <span class="guide-index">02</span>
+            <div>
+              <strong>Read the active trade-off</strong>
+              <p>Cheapest, fastest, and balanced profiles reorder the same candidates using different priorities.</p>
+            </div>
+          </article>
+          <article>
+            <span class="guide-index">03</span>
+            <div>
+              <strong>Check the weakest evidence</strong>
+              <p>A route’s evidence class reflects its least-certain fee, timing, or FX component.</p>
+            </div>
+          </article>
+        </div>
+        <p class="reading-guide-note">
+          Use historical comparison, sensitivity, and break-even tools to test whether the result holds when the scenario changes.
+        </p>
+      </details>
 
       <section class="panel">
         <div class="panel-header">
