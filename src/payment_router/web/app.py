@@ -48,7 +48,7 @@ was fetched before today.
 _CurrencyParam = Annotated[str, Query(min_length=3, max_length=3)]
 _AmountParam = Annotated[str, Query(description="Amount to send, as a decimal string.")]
 
-_CacheKey = tuple[str, str, str]
+_CacheKey = tuple[str, str, str, int]
 
 
 class Explainer(Protocol):
@@ -224,16 +224,30 @@ def create_app(
             # normalize the scale so equivalent spellings ("100", "100.0",
             # "100.00") share one key instead of re-quoting every provider.
             canonical_amount = service.parse_amount(amount).normalize()
-            key = (source.strip().upper(), target.strip().upper(), str(canonical_amount))
-            entry, from_cache = await cache.get(
-                key,
-                lambda: service.build_session(
-                    source,
-                    target,
-                    amount,
-                    networks=networks_factory(),
-                ),
-            )
+            normalized_source = source.strip().upper()
+            normalized_target = target.strip().upper()
+            while True:
+                fx_generation = fx.generation()
+                key = (
+                    normalized_source,
+                    normalized_target,
+                    str(canonical_amount),
+                    fx_generation,
+                )
+                entry, from_cache = await cache.get(
+                    key,
+                    lambda: service.build_session(
+                        source,
+                        target,
+                        amount,
+                        networks=networks_factory(),
+                    ),
+                )
+                # A live refresh can finish while providers are quoting. Such
+                # a graph may contain values derived from two FX generations;
+                # discard it and coalesce a rebuild under the current one.
+                if fx.generation() == fx_generation:
+                    break
         except service.RoutingRequestError as error:
             raise HTTPException(status_code=400, detail=str(error)) from None
         quotes_meta: dict[str, object] = {
