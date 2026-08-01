@@ -241,10 +241,14 @@ always agree on routing behavior and error messages.
   asynchronous amount builds and nested CPU-bound weight sweeps therefore
   cannot monopolize FastAPI's serving loop.
 - The web app keeps a short-lived cache of built routing sessions (default
-  60 seconds, keyed by source, target, and amount) so switching preference or
-  top-N reuses the same quotes instead of re-querying live providers. Only
-  successful builds are cached, responses expose `quoted_at`/`from_cache`
-  metadata, and a TTL of zero disables the cache. The CLI always builds fresh.
+  60 seconds, keyed by source, target, amount, and the active FX generation)
+  so switching preference or top-N reuses the same quotes instead of
+  re-querying live providers. A generation change invalidates older sessions;
+  if a live refresh lands during a build, that build is discarded and
+  coalesced again under the new generation so one graph cannot mix rate
+  snapshots. Only successful builds are cached, responses expose
+  `quoted_at`/`from_cache` metadata, and a TTL of zero disables the cache. The
+  CLI always builds fresh.
 
 - `web/ai.py` is the optional AI layer: when Anthropic credentials resolve,
   `POST /api/explain` streams a Claude-generated reading of the displayed

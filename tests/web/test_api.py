@@ -303,6 +303,35 @@ def test_route_rebuilds_for_different_amount() -> None:
     assert factory.calls == baseline + 2
 
 
+def test_route_rebuilds_after_the_active_fx_source_changes() -> None:
+    from payment_router.core import fx as fx_module
+
+    factory = _CountingFactory()
+    client = TestClient(create_app(networks_factory=factory, quote_ttl_seconds=60.0))
+    baseline = factory.calls
+    params = {"source": "USD", "target": "CNY", "amount": "100"}
+
+    first = client.get("/api/route", params=params)
+    try:
+        fx_module.configure(
+            fx_module.RateSource(
+                mode="live",
+                label="new ECB snapshot",
+                classification=DataSource.VERIFIED,
+                usd_rates=dict(fx_module._FROZEN_RATES_TO_USD),
+                rate_date="2026-07-31",
+            )
+        )
+        second = client.get("/api/route", params=params)
+    finally:
+        fx_module.activate("frozen")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert factory.calls == baseline + 2
+    assert second.json()["quotes"]["from_cache"] is False
+
+
 def test_zero_ttl_disables_session_cache() -> None:
     factory = _CountingFactory()
     client = TestClient(create_app(networks_factory=factory, quote_ttl_seconds=0))
