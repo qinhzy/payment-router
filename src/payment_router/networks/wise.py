@@ -72,7 +72,17 @@ _MONTH_DAY_LABEL = re.compile(
 
 
 class WiseAPIError(RuntimeError):
-    """Raised when the Wise quote API cannot provide a reliable quote."""
+    """Raised when the Wise quote API cannot provide a reliable quote.
+
+    ``code`` and ``params`` identify the failure independently of its English
+    wording, so a frontend can show it in another language; text quoted from
+    the provider stays verbatim in ``params``.
+    """
+
+    def __init__(self, message: str, *, code: str, **params: object) -> None:
+        super().__init__(message)
+        self.code = code
+        self.params = {name: str(value) for name, value in params.items()}
 
 
 class WiseNetwork(PaymentNetwork):
@@ -110,25 +120,32 @@ class WiseNetwork(PaymentNetwork):
             ) as client:
                 response = await client.post(QUOTE_URL, json=payload)
         except httpx.TimeoutException as exc:
-            raise WiseAPIError("Wise quote request timed out") from exc
+            raise WiseAPIError("Wise quote request timed out", code="provider_timeout") from exc
         except httpx.RequestError as exc:
-            raise WiseAPIError("Wise quote request failed") from exc
+            raise WiseAPIError("Wise quote request failed", code="provider_unreachable") from exc
 
         if response.is_error:
             if self._is_unsupported_corridor_error(response):
                 return None
+            detail = self._safe_error_text(response)
             raise WiseAPIError(
-                f"Wise quote request failed with status {response.status_code}: "
-                f"{self._safe_error_text(response)}"
+                f"Wise quote request failed with status {response.status_code}: {detail}",
+                code="provider_http_error",
+                status=response.status_code,
+                detail=detail,
             )
 
         try:
             response_json = response.json()
         except ValueError as exc:
-            raise WiseAPIError("Wise quote response was not valid JSON") from exc
+            raise WiseAPIError(
+                "Wise quote response was not valid JSON", code="provider_bad_response"
+            ) from exc
 
         if not isinstance(response_json, Mapping):
-            raise WiseAPIError("Wise quote response must be a JSON object")
+            raise WiseAPIError(
+                "Wise quote response must be a JSON object", code="provider_bad_response"
+            )
 
         try:
             selected_option = self._select_payment_option(response_json)
@@ -139,7 +156,9 @@ class WiseNetwork(PaymentNetwork):
             fx_rate = self._decimal_from_mapping(response_json, "rate")
             time_hours = self._extract_time_hours(response_json, selected_option)
         except (InvalidOperation, KeyError, TypeError, ValueError) as exc:
-            raise WiseAPIError("Wise quote response missing required fields") from exc
+            raise WiseAPIError(
+                "Wise quote response missing required fields", code="provider_bad_response"
+            ) from exc
 
         # The provider fields are live; normalizing the non-USD fee into the
         # simulator's common USD score inherits the active FX source's class

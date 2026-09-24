@@ -9,13 +9,17 @@ evidence are preferred.
 git clone https://github.com/qinhzy/payment-router.git
 cd payment-router
 uv sync --dev
+uv run playwright install chromium   # once, for the web console browser tests
 uv run pytest -x
 uv run ruff check .
 uv run ruff format --check .
 uv build
 ```
 
-Python 3.11, 3.12, and 3.13 are tested in CI.
+Python 3.11, 3.12, and 3.13 are tested in CI. The browser tests in
+`tests/web/test_console_e2e.py` skip when Chromium is not installed; set
+`PAYMENT_ROUTER_E2E=1` to make a missing browser fail instead (CI does), or
+`PAYMENT_ROUTER_E2E_CHROMIUM` to use a Chromium binary you already have.
 
 ## Before opening a pull request
 
@@ -26,6 +30,9 @@ Python 3.11, 3.12, and 3.13 are tested in CI.
 - Label incomplete evidence `ESTIMATED`; do not infer certainty from a provider
   name or from an AI-generated summary.
 - Preserve the simulator disclaimer and avoid production-transfer claims.
+- Add console text to both `web/static/i18n/en.json` and `zh-CN.json`. A new
+  backend caveat (`CaveatTemplate`) or error code needs a Chinese template with
+  the same `{placeholders}`; `tests/web/test_i18n.py` checks both.
 - Do not add account systems, payment execution, compliance decisions, or a web
   service to an MVP change.
 

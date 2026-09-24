@@ -58,7 +58,38 @@ class UnsupportedCurrencyError(ValueError):
 
 
 class FxLiveUnavailableError(RuntimeError):
-    """Raised when live rates cannot be fetched and no snapshot exists."""
+    """Raised when live rates cannot be fetched and no snapshot exists.
+
+    ``code`` and ``params`` identify the failure independently of its English
+    wording, so a frontend can show it in another language; an error text
+    quoted from the HTTP client stays verbatim in ``params``.
+    """
+
+    def __init__(self, message: str, *, code: str, **params: object) -> None:
+        super().__init__(message)
+        self.code = code
+        self.params = {name: str(value) for name, value in params.items()}
+
+
+class FxDateError(ValueError):
+    """Raised for a rate date the ECB reference series cannot answer."""
+
+    def __init__(self, message: str, *, code: str, **params: object) -> None:
+        super().__init__(message)
+        self.code = code
+        self.params = {name: str(value) for name, value in params.items()}
+
+
+def reason_params(error: FxLiveUnavailableError) -> dict[str, str]:
+    """Flatten a failure into the parameters of a statement that quotes it.
+
+    The quoting statement gets ``reason`` (the English text), ``reason_code``,
+    and each of the failure's parameters prefixed ``reason_``, so a frontend
+    can translate the quoted failure as well as the sentence around it.
+    """
+    params = {"reason": str(error), "reason_code": error.code}
+    params.update({f"reason_{name}": value for name, value in error.params.items()})
+    return params
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +119,10 @@ class FxStatus:
     fallback: bool
     detail: str
     requested_date: str | None = None
+    # ``detail`` as a stable code and parameters, for a frontend that shows
+    # it in another language; a fallback quotes its cause (reason_params).
+    code: str | None = None
+    params: tuple[tuple[str, str], ...] = ()
 
 
 def _frozen_source() -> RateSource:
@@ -127,6 +162,7 @@ def _initial_state() -> _FxState:
             stale=False,
             fallback=False,
             detail="Reproducible teaching values; not current market pricing.",
+            code="frozen",
         ),
         generation=0,
     )
@@ -249,6 +285,7 @@ def activate(
                 stale=False,
                 fallback=False,
                 detail="Reproducible teaching values; not current market pricing.",
+                code="frozen",
             ),
         )
 
@@ -267,6 +304,8 @@ def activate(
                 stale=False,
                 fallback=True,
                 detail=f"Live FX unavailable ({error}); using the frozen teaching table.",
+                code="fallback",
+                params=tuple(reason_params(error).items()),
             ),
         )
 
@@ -284,6 +323,8 @@ def activate(
             stale=source.stale,
             fallback=False,
             detail=detail,
+            code="live_stale" if source.stale else "live",
+            params=(("date", source.rate_date or ""),),
         ),
     )
 
@@ -291,11 +332,13 @@ def activate(
 def _activate_historical(on_date: str, *, timeout_seconds: float) -> FxStatus:
     source = historical_source(on_date, timeout_seconds=timeout_seconds)
     detail = f"ECB reference rates published for {source.rate_date}."
+    code = "historical"
     if source.rate_date != source.requested_date:
         detail += (
             f" {source.requested_date} has no published fixing"
             " (weekend or holiday); the preceding publication is used."
         )
+        code = "historical_substituted"
     return _install(
         source,
         FxStatus(
@@ -308,6 +351,11 @@ def _activate_historical(on_date: str, *, timeout_seconds: float) -> FxStatus:
             fallback=False,
             detail=detail,
             requested_date=source.requested_date,
+            code=code,
+            params=(
+                ("date", source.rate_date or ""),
+                ("requested", source.requested_date or ""),
+            ),
         ),
     )
 
@@ -341,12 +389,21 @@ def _normalize_date(on_date: str) -> str:
     try:
         parsed = datetime.strptime(candidate, "%Y-%m-%d").replace(tzinfo=UTC)
     except ValueError:
-        raise ValueError(f"FX date must be ISO YYYY-MM-DD: {on_date}") from None
+        raise FxDateError(
+            f"FX date must be ISO YYYY-MM-DD: {on_date}", code="date_format", date=on_date
+        ) from None
     today = datetime.now(UTC).date()
     if parsed.date() > today:
-        raise ValueError(f"FX date is in the future: {candidate}")
+        raise FxDateError(
+            f"FX date is in the future: {candidate}", code="date_future", date=candidate
+        )
     if parsed.date() < _EARLIEST_FIXING:
-        raise ValueError(f"FX date precedes the ECB reference series: {candidate}")
+        raise FxDateError(
+            f"FX date precedes the ECB reference series: {candidate}",
+            code="date_too_early",
+            date=candidate,
+            earliest=_EARLIEST_FIXING.isoformat(),
+        )
     return candidate
 
 
@@ -387,6 +444,8 @@ def refresh_live(*, timeout_seconds: float = 10.0) -> FxStatus:
             stale=candidate.stale,
             fallback=False,
             detail=detail,
+            code="live_stale" if candidate.stale else "live",
+            params=(("date", candidate.rate_date or ""),),
         ),
     )
 
@@ -432,22 +491,30 @@ def _fetch_frankfurter(timeout_seconds: float, on_date: str | None = None) -> Ra
         response.raise_for_status()
         payload = json.loads(response.text, parse_float=Decimal)
     except (httpx.HTTPError, ValueError) as error:
-        raise FxLiveUnavailableError(f"Frankfurter request failed: {error}") from error
+        raise FxLiveUnavailableError(
+            f"Frankfurter request failed: {error}", code="fx_request_failed", error=error
+        ) from error
 
     rates_raw = payload.get("rates") if isinstance(payload, dict) else None
     rate_date = payload.get("date") if isinstance(payload, dict) else None
     if not isinstance(rates_raw, dict) or not isinstance(rate_date, str):
-        raise FxLiveUnavailableError("Frankfurter response missing rates or date")
+        raise FxLiveUnavailableError(
+            "Frankfurter response missing rates or date", code="fx_response_invalid"
+        )
 
     usd_rates: dict[str, Decimal] = {"USD": Decimal("1.0")}
     try:
         for currency in symbols:
             units_per_usd = Decimal(str(rates_raw[currency]))
             if units_per_usd <= 0:
-                raise FxLiveUnavailableError(f"non-positive rate for {currency}")
+                raise FxLiveUnavailableError(
+                    f"non-positive rate for {currency}", code="fx_rate_invalid", currency=currency
+                )
             usd_rates[currency] = Decimal("1.0") / units_per_usd
     except (KeyError, InvalidOperation) as error:
-        raise FxLiveUnavailableError(f"Frankfurter response incomplete: {error}") from error
+        raise FxLiveUnavailableError(
+            f"Frankfurter response incomplete: {error}", code="fx_response_incomplete", error=error
+        ) from error
 
     return RateSource(
         mode="live" if on_date is None else "historical",

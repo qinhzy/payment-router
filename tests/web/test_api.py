@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from fastapi.testclient import TestClient
 from helpers import FakeNetwork, make_quote
 
@@ -74,6 +76,30 @@ def test_meta_reports_currencies_networks_and_profiles() -> None:
     assert payload["fx"]["fallback"] is False
 
 
+def test_meta_offers_round_quick_amounts_sized_for_each_currency() -> None:
+    quick = _client().get("/api/meta").json()["quick_amounts"]
+
+    assert set(quick) == {"CNY", "EUR", "GBP", "HKD", "SGD", "USD"}
+    assert quick["USD"] == ["250", "500", "1000", "2500", "5000"]
+    # About seven yuan to the dollar in the frozen teaching table, so the
+    # ladder moves up an order of magnitude instead of offering 250 CNY.
+    assert quick["CNY"] == ["2000", "5000", "10000", "20000", "50000"]
+    for ladder in quick.values():
+        values = [float(value) for value in ladder]
+        assert values == sorted(set(values))
+
+
+def test_meta_survives_a_network_currency_the_rate_table_cannot_price() -> None:
+    def networks() -> list[PaymentNetwork]:
+        return [*_stub_networks(), FakeNetwork("Yen", {"JPY"}, {})]
+
+    response = _client(networks).get("/api/meta")
+
+    assert response.status_code == 200
+    assert "JPY" in response.json()["currencies"]
+    assert "JPY" not in response.json()["quick_amounts"]
+
+
 def test_console_assets_include_the_deep_linkable_regime_view() -> None:
     client = _client()
 
@@ -89,6 +115,30 @@ def test_console_assets_include_the_deep_linkable_regime_view() -> None:
     assert 'id="results-context"' in index
     assert "markResultsStale" in javascript
     assert ".results-context" in stylesheet
+
+
+def test_console_assets_carry_the_interaction_contract() -> None:
+    client = _client()
+
+    index = client.get("/").text
+    javascript = client.get("/app.js").text
+    stylesheet = client.get("/styles.css").text
+
+    # Component `display` rules must not override the attribute, or an empty
+    # recents bar and a blank disclaimer render before any data arrives.
+    assert re.search(r"\[hidden\]\s*\{\s*display:\s*none\s*!important;", stylesheet)
+    # Break-even and rate-date comparisons honour the selected profile.
+    for kind in ("breakeven", "compare"):
+        assert re.search(
+            rf'kind === "{kind}"\) \{{\s*return \{{[^}}]*profile: request\.profile',
+            javascript,
+        ), kind
+    # Every view discloses provider failures, grouped per network and reason.
+    assert "showWarnings(data.warnings)" in javascript
+    assert "function groupWarnings" in javascript
+    # Scan range and inline errors live in the form, next to their inputs.
+    for element_id in ("range-min", "range-max", "range-error", "date-error"):
+        assert f'id="{element_id}"' in index
 
 
 def test_route_returns_single_route_with_amounts_and_mermaid() -> None:
@@ -209,7 +259,15 @@ def test_route_surfaces_provider_warnings() -> None:
 
     assert response.status_code == 200
     warnings = response.json()["warnings"]
-    assert warnings == [{"network": "Flaky", "pair": "USD->CNY", "reason": "provider exploded"}]
+    assert warnings == [
+        {
+            "network": "Flaky",
+            "pair": "USD->CNY",
+            "reason": "provider exploded",
+            "code": None,
+            "params": {},
+        }
+    ]
 
 
 def test_decide_returns_three_profiles_and_tradeoff() -> None:
@@ -525,6 +583,8 @@ def test_compare_returns_both_sides_and_deltas(monkeypatch, tmp_path, httpx_mock
         assert float(payload["deltas"]["receive"]) < 0
         assert payload["deltas"]["route_changed"] is False
         assert any("Only the FX table differs" in caveat for caveat in payload["caveats"])
+        # Top-level warnings merge both sides so the console can show them once.
+        assert payload["warnings"] == []
     finally:
         fx_module.activate("frozen")
 
@@ -809,3 +869,111 @@ def test_regime_rejects_an_inverted_range() -> None:
     )
 
     assert response.status_code == 400
+
+
+def _networks_with_a_failing_provider() -> list[PaymentNetwork]:
+    return [
+        *_stub_networks(),
+        FakeNetwork(
+            "Flaky",
+            {"USD", "CNY"},
+            {("USD", "CNY"): RuntimeError("quote request failed")},
+        ),
+    ]
+
+
+def test_breakeven_discloses_provider_failures_once() -> None:
+    response = _client(_networks_with_a_failing_provider).get(
+        "/api/breakeven",
+        params={"source": "USD", "target": "CNY", "samples": 4, "refine": 1},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["builds"] > 1
+    assert payload["warnings"] == [
+        {
+            "network": "Flaky",
+            "pair": "USD->CNY",
+            "reason": "quote request failed",
+            "code": None,
+            "params": {},
+        }
+    ]
+
+
+def test_breakeven_applies_the_requested_profile() -> None:
+    response = _client().get(
+        "/api/breakeven",
+        params={"source": "USD", "target": "CNY", "samples": 3, "refine": 0, "profile": "fastest"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["request"]["profile"] == "fastest"
+
+
+def test_regime_discloses_provider_failures_once() -> None:
+    response = _client(_networks_with_a_failing_provider).get(
+        "/api/regime",
+        params={"source": "USD", "target": "CNY", "amount_samples": 3, "weight_steps": 10},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["builds"] == 3
+    assert payload["warnings"] == [
+        {
+            "network": "Flaky",
+            "pair": "USD->CNY",
+            "reason": "quote request failed",
+            "code": None,
+            "params": {},
+        }
+    ]
+
+
+def test_errors_carry_a_stable_code_beside_the_english_detail() -> None:
+    client = _client()
+
+    invalid = client.get("/api/route", params={"source": "USD", "target": "CNY", "amount": "0"})
+    unsupported = client.get(
+        "/api/route", params={"source": "USD", "target": "JPY", "amount": "100"}
+    )
+    unroutable = client.get("/api/route", params={"source": "GBP", "target": "SGD", "amount": "5"})
+
+    assert invalid.status_code == 400
+    assert invalid.json() == {
+        "detail": "Amount must be greater than zero.",
+        "code": "amount_not_positive",
+        "params": {},
+    }
+    assert unsupported.json()["code"] == "unsupported_currency"
+    assert unsupported.json()["params"]["currencies"] == "JPY"
+    assert unsupported.json()["detail"].startswith("Unsupported currency code(s): JPY.")
+    assert unroutable.status_code == 404
+    assert unroutable.json()["code"] == "no_route"
+    assert unroutable.json()["params"] == {"source": "GBP", "target": "SGD", "amount": "5"}
+
+
+def test_caveat_codes_are_index_aligned_with_the_english_caveats() -> None:
+    client = _client(_networks_with_a_failing_provider)
+
+    for path, params in (
+        ("/api/breakeven", {"source": "USD", "target": "CNY", "samples": 4, "refine": 1}),
+        ("/api/regime", {"source": "USD", "target": "CNY", "amount_samples": 3}),
+    ):
+        payload = client.get(path, params=params).json()
+        codes = payload["caveat_codes"]
+        assert len(codes) == len(payload["caveats"]) > 0, path
+        assert all(entry["code"] for entry in codes), path
+
+    breakeven = client.get(
+        "/api/breakeven", params={"source": "USD", "target": "CNY", "samples": 4, "refine": 1}
+    ).json()
+    independent = breakeven["caveats"].index(
+        next(caveat for caveat in breakeven["caveats"] if "quoted independently" in caveat)
+    )
+    assert breakeven["caveat_codes"][independent] == {
+        "code": "breakeven.independent_quotes",
+        "params": {},
+    }

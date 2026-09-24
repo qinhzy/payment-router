@@ -19,7 +19,123 @@ All notable user-visible changes are recorded here. The project follows
   the sampled boundary has to move with the fee rather than merely land
   somewhere plausible, plus deterministic graph-build counts, four-neighbour
   connectivity, the API worker-thread boundary, CLI output, deep links, and the
-  AI payload contract.
+  AI payload contract;
+- a console **candidate comparison** table above Top-3/Top-5 results: rank,
+  route and networks, recipient amount with its difference to #1, fees, time,
+  and evidence class, with each row jumping to that route's breakdown. Route
+  cards also show the effective rate, derived only from the amounts on screen;
+- a console **scan range** for the break-even and regime views (the API's
+  `min`/`max`), kept in the shareable URL, plus a "your amount" marker on the
+  break-even strip and a scenario crosshair on the regime map. Both follow the
+  form without re-running the scan and describe only observed samples: an
+  amount inside a crossover bracket says either route may win, and the regime
+  note names the nearest sampled cell rather than inventing a value between
+  cells;
+- a Cancel button (and Esc) for a running request, which restores the previous
+  view, and decade tick labels on the logarithmic amount axes;
+- a Simplified Chinese console (中文界面) beside English. It follows the
+  browser language, is switched from the top bar and remembered, and redraws
+  the results on screen from the data already received. Caveats and errors are
+  translated from stable codes rather than by parsing prose: every caveat is an
+  `analysis.Caveat`, a `str` that also carries a code and its parameters, the
+  analysis JSON adds `caveat_codes` index-aligned with `caveats`, API errors add
+  `code` and `params` beside the unchanged English `detail`, and warnings add a
+  `code` for the simulator's own statements. When a translation lacks a figure
+  the server sent, the English sentence is shown instead. Provenance registry
+  entries are translated by evidence id; the English entry stays
+  authoritative, is shown on hover, and every figure it gives must reappear
+  in the translation;
+- amount presets sized to the source currency: `/api/meta` returns
+  `quick_amounts`, a USD ladder converted at the active mid-rate and snapped to
+  a round figure, so a CNY sender is offered 2,000–50,000 rather than 250;
+  on a phone too narrow for five full figures they read 2K or 1万 instead
+  of clipping the last preset;
+- browser tests of the console (`tests/web/test_console_e2e.py`, Playwright as
+  a development-only dependency) against a real server: hidden elements, the
+  candidate table, grouped warnings, the break-even profile and marker, amount
+  and field validation, Cancel, history navigation, quick amounts, language
+  switching, and the phone layout. They skip without Chromium unless
+  `PAYMENT_ROUTER_E2E=1`, which the CI job that installs Chromium sets; catalog
+  tests keep both languages' keys and placeholders in step and require a
+  Chinese template for every caveat and error code the backend can emit.
+
+### Fixed
+
+- a break-even region no longer claims amounts at which no route was
+  observed. Regions used to start at the requested minimum even when the
+  smallest samples could not be routed (a USD→CNY scan reported CIPS from 10.00
+  although nothing routed below 23.10), and an unroutable sample between two
+  winners merged them into one region, hiding the route that won above it.
+  Regions now cover only runs of routable samples, never bridge an unroutable
+  one, and a lone routable sample is kept as a single-amount region instead of
+  being reported as no route at all. The console draws the gaps as hatched
+  "no route observed" spans;
+- break-even, regime, and rate-date comparison results now disclose provider
+  failures. Their scans discarded every build's warnings, so a provider that
+  was down silently changed which route could win. `BreakevenReport`,
+  `RegimeMap`, and `ComparisonReport` carry the failures once each, the API
+  returns them as `warnings`, the CLI prints them, and the AI system prompt
+  says a result computed without a provider must not be called the best
+  available;
+- the console's **Break-even** and **rate-date comparison** now use the selected
+  cost/time profile; both silently ran the balanced profile whatever was
+  chosen. The profile is part of their URL, stale check, and recent searches;
+- elements marked `hidden` stayed visible when a component rule set `display`:
+  an empty "Recent" bar showed on a first visit and a blank disclaimer flashed
+  before metadata loaded;
+- an AI explanation kept streaming in the background after new results
+  replaced its panel, and a run that superseded another left "Working…" as a
+  button's permanent label;
+- break-even bisection that met a third winner inside one sampled interval
+  reported only the first change of winner and labelled the third route's
+  amounts with the route that won at the next coarse sample. Both halves are
+  now located separately, each change becomes its own crossover, and the
+  observed midpoints represent the regions they fall in. The halves share
+  the interval's remaining steps, so one sampled interval never costs more
+  than `refine_steps` builds even when fluctuating quotes crown a new winner
+  at every midpoint;
+- sensitivity timing caveats named only the currency path, so two rails on the
+  same path printed the same warning twice. They now name the networks too;
+- the regime map's vertical axis title collapsed in Chinese: characters could
+  wrap between any two glyphs and, without a font's vertical metrics, stacked
+  on top of each other. It is kept on one line and set sideways in every
+  language;
+- a rate date outside the published series blocked every route search: the
+  browser's own form validation stopped **Find routes** with an untranslated
+  message, although only the rate-date comparison reads that field. Each
+  request is now validated by the fields it uses;
+- times under an hour lost precision: hours were rounded to three decimals, so
+  SEPA Instant's ten seconds (0.003 h) read back as eleven. Below one hour the
+  API, CLI, and Mermaid output keep six decimals (0.002778 h);
+- a route without a modelled time band repeated its headline in raw hours
+  ("20.0 hours" under "20 h"); the tile now says that no range is modelled;
+- evidence badges in the source registry stacked one Chinese glyph per line in
+  their narrow column, and on a phone a very large figure squeezed the tile
+  beside it to a sliver. Badges stay on one line and figures wrap inside
+  their own tile;
+- the scenario summary echoed an amount the form rejects; it shows a dash
+  until the amount is valid;
+- the sensitivity strip left its last sampling step empty: regions list the
+  sampled weights they won, one step apart, and were drawn at exactly that
+  width, so a 0–1 axis ended short of its right edge. Each boundary is now
+  drawn midway between the two samples it separates; titles keep the sampled
+  ranges;
+- an inverted scan range was reported with internal parameter names
+  ("min_amount must be below max_amount"); the message now states both
+  amounts;
+- sensitivity caveats wrote paths with an ASCII arrow ("USD -> CNY") where
+  every other path, in the CLI and the console, reads "USD → CNY";
+- the Chinese console still showed provider failures ("Wise quote request
+  failed"), the FX source's tooltip, rate-date and scan-range errors, and the
+  cause quoted by the comparison errors in English. Each now carries a stable
+  code and parameters: `WiseAPIError`, the graph's `QuoteTimeoutError`,
+  `FxLiveUnavailableError`, the new `FxDateError`, build warnings (`params`
+  beside `code`), and the FX status in `/api/meta` (`code`, `params`). A
+  comparison error quotes the live-rate failure as `reason`, `reason_code`
+  and `reason_*` parameters, so the quoted cause is translated too; its
+  English now names that cause instead of repeating the fallback sentence.
+  Text quoted from a provider or HTTP client (an HTTP status line) stays
+  verbatim.
 
 ### Changed
 
@@ -38,7 +154,34 @@ All notable user-visible changes are recorded here. The project follows
   labelled as properties of the model rather than measured market facts;
 - `sensitivity` and `breakeven` now share one route-signature primitive without
   changing either module's existing public import surface. The regime analysis
-  introduces no rates, timings, fees, or provenance records.
+  introduces no rates, timings, fees, or provenance records;
+- provider warnings are grouped by network and reason: an unreachable provider
+  shows one line with its affected corridors instead of dozens of identical
+  rows;
+- the amount accepts thousands separators ("1,000.50", "10 000"). A separator
+  is only read as grouping between three-digit groups, so an ambiguous "1,5"
+  is rejected rather than silently read as fifteen;
+- the rate date and scan range validate inline beside their inputs, move focus
+  to the field at fault, and pressing Enter in them runs their own analysis
+  instead of a route search. The comparison button reads "Compare with latest",
+  matching its baseline;
+- request errors are readable: FastAPI validation details are listed by field,
+  and an unreachable server says to check `remit serve` instead of "Failed to
+  fetch";
+- the form puts **Find routes** beside the profile and groups the analyses by
+  whether they use the entered amount, removing a large empty area that wrapped
+  buttons used to leave. Focus returns to the control that started a request,
+  results scroll into view when they finish below the fold, and the page title
+  names the active view;
+- on phones the top bar stays one row, route flows run vertically, stat tiles
+  use two columns, panel headers stack, and wide tables show scroll shadows;
+  the recipient amount and its difference to #1 stay visible without
+  scrolling. Recent searches can be cleared. The FX source moves from the top
+  bar into the disclaimer so the one-row bar has room for the language switch;
+- the CLI groups provider warnings by network and reason, like the console:
+  an unreachable provider is one row with a count and a sample of corridors
+  instead of one row per corridor;
+- AI explanations answer in the console's language rather than the browser's.
 
 ## [0.8.0] - Unreleased
 

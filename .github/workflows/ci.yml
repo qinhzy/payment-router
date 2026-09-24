@@ -25,7 +25,14 @@ jobs:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
       - run: uv sync --group dev --locked
+      # Browser tests of the web console need Chromium; one job is enough.
+      - if: matrix.python-version == '3.11'
+        run: uv run playwright install --with-deps chromium
       - run: uv run pytest -x
+        env:
+          # "1" turns a missing browser into a failure instead of a skip, so
+          # the job that installs Chromium can never pass without the tests.
+          PAYMENT_ROUTER_E2E: ${{ matrix.python-version == '3.11' && '1' || '0' }}
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - if: matrix.python-version == '3.11'

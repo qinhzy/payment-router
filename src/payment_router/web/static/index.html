@@ -23,13 +23,22 @@
         </span>
         <div>
           <div class="brand-name">payment-router</div>
-          <div class="brand-tagline">Explainable cross-border routing simulator</div>
+          <div class="brand-tagline" data-i18n="brand.tagline">Explainable cross-border routing simulator</div>
         </div>
       </div>
       <div class="topbar-actions">
         <span class="chip" id="fx-chip" hidden></span>
         <span class="chip" id="version-chip" hidden></span>
-        <a class="chip" href="https://github.com/qinhzy/payment-router" target="_blank" rel="noopener">GitHub</a>
+        <a class="chip chip-link" href="https://github.com/qinhzy/payment-router" target="_blank" rel="noopener">GitHub</a>
+        <button
+          class="chip chip-button"
+          id="lang-toggle"
+          type="button"
+          lang="zh-CN"
+          data-i18n="lang.toggle"
+          data-i18n-attr="aria-label=lang.toggleLabel;title=lang.toggleLabel"
+          aria-label="Switch the interface to Chinese"
+        >中文</button>
         <button class="icon-button" id="theme-toggle" type="button" aria-label="Toggle color theme">
           <svg class="theme-icon-light" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
             <circle cx="12" cy="12" r="4.2" />
@@ -48,13 +57,17 @@
           <path d="M12 9v4.5M12 17.2v.05" />
           <path d="M10.3 3.9 2.7 17a2 2 0 0 0 1.7 3h15.2a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
         </svg>
-        <span id="disclaimer-text"></span>
+        <div class="disclaimer-body">
+          <span id="disclaimer-text" data-i18n="disclaimer"></span>
+          <!-- Phones show the FX source here instead of in the one-row top bar. -->
+          <span class="chip disclaimer-fx" id="disclaimer-fx" hidden></span>
+        </div>
       </section>
 
       <section class="panel">
-        <form class="panel-body control-grid" id="route-form" aria-busy="false">
+        <form class="panel-body control-grid" id="route-form" aria-busy="false" novalidate>
           <div class="field">
-            <label class="field-label" for="amount-input">You send</label>
+            <label class="field-label" for="amount-input" data-i18n="form.youSend">You send</label>
             <div class="amount-wrap">
               <input
                 id="amount-input"
@@ -65,12 +78,23 @@
                 value="1000"
                 aria-label="Amount to send"
                 aria-describedby="amount-error"
+                data-i18n-attr="aria-label=form.amountLabel"
               />
-              <select id="source-select" aria-label="Source currency"></select>
+              <select
+                id="source-select"
+                aria-label="Source currency"
+                data-i18n-attr="aria-label=form.sourceLabel"
+              ></select>
             </div>
             <p class="field-error" id="amount-error" role="alert" hidden></p>
-            <div class="quick-amounts" aria-label="Quick amount presets">
-              <span>Quick</span>
+            <div
+              class="quick-amounts"
+              id="quick-amounts"
+              role="group"
+              aria-label="Quick amount presets"
+              data-i18n-attr="aria-label=form.quickLabel"
+            >
+              <span data-i18n="form.quick">Quick</span>
               <button type="button" data-quick-amount="250" aria-pressed="false">250</button>
               <button type="button" data-quick-amount="500" aria-pressed="false">500</button>
               <button type="button" data-quick-amount="1000" aria-pressed="true">1,000</button>
@@ -80,68 +104,133 @@
           </div>
 
           <div class="field">
-            <span class="field-label">Corridor</span>
+            <span class="field-label" data-i18n="form.corridor">Corridor</span>
             <div class="corridor">
-              <button class="swap-button" id="swap-button" type="button" aria-label="Swap currencies">
+              <button
+                class="swap-button"
+                id="swap-button"
+                type="button"
+                aria-label="Swap currencies"
+                data-i18n-attr="aria-label=form.swap"
+              >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M16 3.5 20 7.5l-4 4M20 7.5H4M8 20.5l-4-4 4-4M4 16.5h16" />
                 </svg>
               </button>
-              <select id="target-select" aria-label="Target currency"></select>
+              <select
+                id="target-select"
+                aria-label="Target currency"
+                data-i18n-attr="aria-label=form.targetLabel"
+              ></select>
             </div>
           </div>
 
           <div class="field">
-            <span class="field-label">Candidates</span>
-            <div class="segmented" id="topn-group" role="radiogroup" aria-label="Number of candidate routes">
-              <label><input type="radio" name="top_n" value="1" checked />Best</label>
-              <label><input type="radio" name="top_n" value="3" />Top 3</label>
-              <label><input type="radio" name="top_n" value="5" />Top 5</label>
+            <span class="field-label" data-i18n="form.candidates">Candidates</span>
+            <div
+              class="segmented"
+              id="topn-group"
+              role="radiogroup"
+              aria-label="Number of candidate routes"
+              data-i18n-attr="aria-label=form.candidatesLabel"
+            >
+              <label><input type="radio" name="top_n" value="1" checked /><span data-i18n="form.best">Best</span></label>
+              <label><input type="radio" name="top_n" value="3" /><span data-i18n="form.top3">Top 3</span></label>
+              <label><input type="radio" name="top_n" value="5" /><span data-i18n="form.top5">Top 5</span></label>
             </div>
           </div>
 
           <div class="field profile-field">
-            <span class="field-label">Optimize for</span>
-            <div class="segmented" id="profile-group" role="radiogroup" aria-label="Routing preference">
+            <span class="field-label" data-i18n="form.optimizeFor">Optimize for</span>
+            <div
+              class="segmented"
+              id="profile-group"
+              role="radiogroup"
+              aria-label="Routing preference"
+              data-i18n-attr="aria-label=form.profileLabel"
+            >
               <label>
                 <input type="radio" name="profile" value="cheapest" />
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5v9M14.8 9.2c-.6-1-1.6-1.4-2.8-1.4-1.7 0-2.9.9-2.9 2.2 0 2.9 5.8 1.5 5.8 4.3 0 1.3-1.2 2.2-2.9 2.2-1.3 0-2.3-.5-2.9-1.5" /></svg>
-                Cheapest
+                <span data-i18n="profile.cheapest">Cheapest</span>
               </label>
               <label>
                 <input type="radio" name="profile" value="fastest" />
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2.5 4.5 13.5H11L10 21.5l8.7-11H12.5Z" /></svg>
-                Fastest
+                <span data-i18n="profile.fastest">Fastest</span>
               </label>
               <label>
                 <input type="radio" name="profile" value="balanced" checked />
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5v17M5.5 20.5h13M12 6 6 8.2l-2.4 5.6a3.4 3.4 0 0 0 4.8 0L6 8.2M12 6l6 2.2 2.4 5.6a3.4 3.4 0 0 1-4.8 0L18 8.2" /></svg>
-                Balanced
+                <span data-i18n="profile.balanced">Balanced</span>
               </label>
             </div>
           </div>
 
           <div class="control-actions">
-            <button class="button button-primary" id="route-button" type="submit">Find routes</button>
-            <button class="button button-ghost" id="decide-button" type="button">Compare profiles</button>
-            <button class="button button-ghost" id="sensitivity-button" type="button">Sensitivity</button>
-            <button class="button button-ghost" id="regime-button" type="button">
-              Regime map
-            </button>
-            <button class="button button-ghost" id="breakeven-button" type="button">
-              Break-even
-            </button>
+            <button class="button button-primary" id="route-button" type="submit" data-i18n="form.findRoutes">Find routes</button>
+          </div>
+
+          <div class="analysis-bar" role="group" aria-labelledby="analysis-label">
+            <span class="field-label" id="analysis-label" data-i18n="form.analyze">Analyze</span>
+            <div class="analysis-group">
+              <span class="analysis-caption" data-i18n="form.atThisAmount">At this amount</span>
+              <div class="analysis-buttons">
+                <button class="button button-ghost" id="decide-button" type="button" data-i18n="form.compareProfiles">Compare profiles</button>
+                <button class="button button-ghost" id="sensitivity-button" type="button" data-i18n="form.sensitivity">Sensitivity</button>
+              </div>
+            </div>
+            <div class="analysis-group">
+              <span class="analysis-caption" data-i18n="form.acrossAmounts">Across amounts</span>
+              <div class="analysis-buttons">
+                <button class="button button-ghost" id="breakeven-button" type="button" data-i18n="form.breakeven">Break-even</button>
+                <button class="button button-ghost" id="regime-button" type="button" data-i18n="form.regime">Regime map</button>
+                <div class="range-field">
+                  <label for="range-min" data-i18n="form.scan">Scan</label>
+                  <input
+                    id="range-min"
+                    name="min"
+                    inputmode="decimal"
+                    autocomplete="off"
+                    spellcheck="false"
+                    value="10"
+                    aria-label="Smallest amount to scan"
+                    aria-describedby="range-error"
+                    data-i18n-attr="aria-label=form.scanMin"
+                  />
+                  <span aria-hidden="true">–</span>
+                  <input
+                    id="range-max"
+                    name="max"
+                    inputmode="decimal"
+                    autocomplete="off"
+                    spellcheck="false"
+                    value="100000"
+                    aria-label="Largest amount to scan"
+                    aria-describedby="range-error"
+                    data-i18n-attr="aria-label=form.scanMax"
+                  />
+                  <span class="range-currency" id="range-currency">USD</span>
+                </div>
+              </div>
+            </div>
+            <p class="field-error" id="range-error" role="alert" hidden></p>
           </div>
 
           <div class="control-row control-history">
-            <label class="field-label" for="on-date">Rate date</label>
-            <input type="date" id="on-date" class="date-input" aria-label="Historical rate date" />
-            <button class="button button-ghost" id="compare-button" type="button">
-              Compare with today
-            </button>
-            <span class="hint" id="compare-hint">
-              Prices the same corridor at a past ECB fixing.
+            <label class="field-label" for="on-date" data-i18n="form.rateDate">Rate date</label>
+            <input
+              type="date"
+              id="on-date"
+              class="date-input"
+              min="1999-01-04"
+              aria-describedby="date-error compare-hint"
+            />
+            <button class="button button-ghost" id="compare-button" type="button" data-i18n="form.compareLatest">Compare with latest</button>
+            <span class="hint" id="compare-hint" data-i18n="form.compareHint">
+              Prices the same corridor at a past ECB fixing and at the latest one.
             </span>
+            <p class="field-error" id="date-error" role="alert" hidden></p>
           </div>
         </form>
         <div class="scenario-rail">
@@ -154,12 +243,12 @@
             </svg>
           </span>
           <div class="scenario-copy">
-            <span>Current scenario</span>
+            <span data-i18n="scenario.current">Current scenario</span>
             <strong id="scenario-summary" aria-live="polite" aria-atomic="true">1,000 USD → CNY · Balanced · Best route</strong>
           </div>
           <div class="scenario-assurance">
-            <strong>Evidence-first simulation</strong>
-            <span>Fees, FX assumptions, timing, and source class stay visible.</span>
+            <strong data-i18n="scenario.assuranceTitle">Evidence-first simulation</strong>
+            <span data-i18n="scenario.assuranceBody">Fees, FX assumptions, timing, and source class stay visible.</span>
           </div>
         </div>
         <div class="recents" id="recents" hidden></div>
@@ -170,12 +259,10 @@
       <p class="sr-only" id="results-status" role="status" aria-live="polite" aria-atomic="true"></p>
       <section class="results-context" id="results-context" role="status" aria-live="polite" hidden>
         <div>
-          <strong>Scenario changed</strong>
-          <span id="results-context-copy">Inputs changed. Results below still reflect the previous scenario.</span>
+          <strong data-i18n="stale.title">Scenario changed</strong>
+          <span id="results-context-copy" data-i18n="stale.body">Inputs changed. Results below still reflect the previous scenario.</span>
         </div>
-        <button class="button button-ghost" id="rerun-button" type="button">
-          Refresh results
-        </button>
+        <button class="button button-ghost" id="rerun-button" type="button" data-i18n="stale.refresh">Refresh results</button>
       </section>
       <section class="results" id="results" aria-busy="false">
         <div class="empty-state">
@@ -188,23 +275,23 @@
               <path d="M6.7 11.4 9.9 11.9M14.1 10.9l3.5-4M14.1 13.1l3.5 4" />
             </svg>
           </span>
-          <div class="empty-title">Pick a corridor to simulate</div>
-          <p>Set the scenario above, then inspect not only which route wins, but why.</p>
+          <div class="empty-title" data-i18n="empty.title">Pick a corridor to simulate</div>
+          <p data-i18n="empty.body">Set the scenario above, then inspect not only which route wins, but why.</p>
           <div class="empty-guides">
             <div>
               <span class="guide-index">01</span>
-              <strong>Total cost</strong>
-              <span>See route fees, FX effects, and recipient amount together.</span>
+              <strong data-i18n="empty.guide1Title">Total cost</strong>
+              <span data-i18n="empty.guide1Body">See route fees, FX effects, and recipient amount together.</span>
             </div>
             <div>
               <span class="guide-index">02</span>
-              <strong>Delivery range</strong>
-              <span>Compare point estimates with the uncertainty behind them.</span>
+              <strong data-i18n="empty.guide2Title">Delivery range</strong>
+              <span data-i18n="empty.guide2Body">Compare point estimates with the uncertainty behind them.</span>
             </div>
             <div>
               <span class="guide-index">03</span>
-              <strong>Provenance</strong>
-              <span>Trace every assumption to its evidence class and reference.</span>
+              <strong data-i18n="empty.guide3Title">Provenance</strong>
+              <span data-i18n="empty.guide3Body">Trace every assumption to its evidence class and reference.</span>
             </div>
           </div>
         </div>
@@ -213,54 +300,55 @@
       <details class="panel reading-guide">
         <summary>
           <span>
-            <strong>How to read the ranking</strong>
-            <small>Three checks for a defensible route decision</small>
+            <strong data-i18n="guide.title">How to read the ranking</strong>
+            <small data-i18n="guide.subtitle">Three checks for a defensible route decision</small>
           </span>
           <span class="reading-guide-action">
-            <span class="reading-guide-open-label">Open guide</span>
-            <span class="reading-guide-close-label">Close guide</span>
+            <span class="reading-guide-open-label" data-i18n="guide.open">Open guide</span>
+            <span class="reading-guide-close-label" data-i18n="guide.close">Close guide</span>
           </span>
         </summary>
         <div class="reading-guide-grid">
           <article>
             <span class="guide-index">01</span>
             <div>
-              <strong>Start with the outcome</strong>
-              <p>Compare recipient amount, modeled all-in cost, and delivery range together—not a headline fee alone.</p>
+              <strong data-i18n="guide.step1Title">Start with the outcome</strong>
+              <p data-i18n="guide.step1Body">Compare recipient amount, modeled all-in cost, and delivery range together—not a headline fee alone.</p>
             </div>
           </article>
           <article>
             <span class="guide-index">02</span>
             <div>
-              <strong>Read the active trade-off</strong>
-              <p>Cheapest, fastest, and balanced profiles reorder the same candidates using different priorities.</p>
+              <strong data-i18n="guide.step2Title">Read the active trade-off</strong>
+              <p data-i18n="guide.step2Body">Cheapest, fastest, and balanced profiles reorder the same candidates using different priorities.</p>
             </div>
           </article>
           <article>
             <span class="guide-index">03</span>
             <div>
-              <strong>Check the weakest evidence</strong>
-              <p>A route’s evidence class reflects its least-certain fee, timing, or FX component.</p>
+              <strong data-i18n="guide.step3Title">Check the weakest evidence</strong>
+              <p data-i18n="guide.step3Body">A route’s evidence class reflects its least-certain fee, timing, or FX component.</p>
             </div>
           </article>
         </div>
-        <p class="reading-guide-note">
+        <p class="reading-guide-note" data-i18n="guide.note">
           Use historical comparison, sensitivity, and break-even tools to test whether the result holds when the scenario changes.
         </p>
       </details>
 
       <section class="panel">
         <div class="panel-header">
-          <h2>Data provenance registry</h2>
-          <span class="hint">Every fee, time, and FX component carries its own evidence class</span>
+          <h2 data-i18n="registry.title">Data provenance registry</h2>
+          <span class="hint" data-i18n="registry.hint">Every fee, time, and FX component carries its own evidence class</span>
         </div>
         <div id="sources"></div>
       </section>
     </main>
 
     <footer id="footer">
-      Teaching &amp; research simulator — not a production quote, transfer, compliance, or
-      financial-advice system.
+      <span data-i18n="footer.text">Teaching &amp; research simulator — not a production quote, transfer, compliance, or
+      financial-advice system.</span>
+      <a href="https://github.com/qinhzy/payment-router" target="_blank" rel="noopener" data-i18n="footer.source">Source on GitHub</a>
     </footer>
 
     <script src="./app.js"></script>

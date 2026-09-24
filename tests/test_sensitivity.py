@@ -128,6 +128,37 @@ def test_later_live_hop_and_estimated_band_caveats() -> None:
 
     assert any("assumes" in caveat and "hop 2" in caveat for caveat in report.caveats)
     assert any("scenario-estimated" in caveat for caveat in report.caveats)
+    # Each caveat also names itself, so a frontend can translate it without
+    # parsing the sentence; the parameters are the figures the sentence quotes.
+    by_code = {caveat.code: caveat.params for caveat in report.caveats}
+    assert by_code["sensitivity.later_live_hops"] == {
+        "path": "USD → EUR → CNY",
+        "networks": "LiveTimed",
+        "hops": "2",
+    }
+    assert by_code["sensitivity.estimated_timing"] == {"path": "USD → CNY", "networks": "Scenario"}
+
+
+def test_timing_caveats_name_the_network_when_two_routes_share_a_path() -> None:
+    """Same path, different rails: each caveat must say which route it is about."""
+    networks = [
+        FakeNetwork(
+            name,
+            {"USD", "CNY"},
+            {("USD", "CNY"): make_quote(name, fee, hours, "7.0", DataSource.ESTIMATED)},
+        )
+        for name, fee, hours in (("Cheap", "1", "48"), ("Quick", "30", "1"))
+    ]
+    graph = PaymentGraph(
+        networks=networks, currencies=["USD", "CNY"], amount=Decimal("1000"), amount_currency="USD"
+    )
+    asyncio.run(graph.build())
+    report = analyze(PaymentRouter(graph), "USD", "CNY", Decimal("1000"), steps=20)
+
+    timing = [caveat for caveat in report.caveats if "scenario-estimated" in caveat]
+    assert len(timing) == 2
+    assert len(set(timing)) == 2, "two different routes must not produce identical caveats"
+    assert {caveat.params["networks"] for caveat in timing} == {"Cheap", "Quick"}
 
 
 def test_swift_quote_carries_per_hop_timing_band() -> None:
