@@ -132,11 +132,11 @@ def test_later_live_hop_and_estimated_band_caveats() -> None:
     # parsing the sentence; the parameters are the figures the sentence quotes.
     by_code = {caveat.code: caveat.params for caveat in report.caveats}
     assert by_code["sensitivity.later_live_hops"] == {
-        "path": "USD -> EUR -> CNY",
+        "path": "USD → EUR → CNY",
         "networks": "LiveTimed",
         "hops": "2",
     }
-    assert by_code["sensitivity.estimated_timing"] == {"path": "USD -> CNY", "networks": "Scenario"}
+    assert by_code["sensitivity.estimated_timing"] == {"path": "USD → CNY", "networks": "Scenario"}
 
 
 def test_timing_caveats_name_the_network_when_two_routes_share_a_path() -> None:

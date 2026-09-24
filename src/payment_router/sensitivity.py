@@ -123,7 +123,7 @@ def _caveats_for(regions: list[WeightRegion]) -> list[str]:
         if signature in seen:
             continue
         seen.add(signature)
-        path_label = " -> ".join(signature[0])
+        path_label = " → ".join(signature[0])
         networks = ", ".join(dict.fromkeys(signature[1]))
 
         later_live_hops = [

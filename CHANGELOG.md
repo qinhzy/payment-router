@@ -120,6 +120,8 @@ All notable user-visible changes are recorded here. The project follows
 - an inverted scan range was reported with internal parameter names
   ("min_amount must be below max_amount"); the message now states both
   amounts;
+- sensitivity caveats wrote paths with an ASCII arrow ("USD -> CNY") where
+  every other path, in the CLI and the console, reads "USD → CNY";
 - the Chinese console still showed provider failures ("Wise quote request
   failed"), the FX source's tooltip, rate-date and scan-range errors, and the
   cause quoted by the comparison errors in English. Each now carries a stable
