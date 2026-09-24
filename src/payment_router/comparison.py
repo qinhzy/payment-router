@@ -26,6 +26,7 @@ from payment_router.service import (
     BuildWarning,
     RoutingRequestError,
     build_session,
+    merge_warnings,
     parse_amount,
     select_route_for_profile,
 )
@@ -94,6 +95,11 @@ class ComparisonReport:
     @property
     def route_changed(self) -> bool:
         return _signature(self.baseline.route) != _signature(self.candidate.route)
+
+    @property
+    def warnings(self) -> tuple[BuildWarning, ...]:
+        """Provider failures from either side, reported once each."""
+        return merge_warnings(self.baseline.warnings, self.candidate.warnings)
 
 
 def _delta(candidate: Route | None, baseline: Route | None, field: str) -> Decimal | None:

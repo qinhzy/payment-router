@@ -188,3 +188,148 @@ def test_samples_are_geometrically_spaced() -> None:
     # Equal ratios rather than equal differences.
     assert spaced[1] == Decimal("100.00")
     assert spaced[2] == Decimal("1000.00")
+
+
+class Blackout(Rail):
+    """A rail that cannot quote inside one amount band, like a failed provider."""
+
+    def __init__(self, name: str, low: str, high: str, **kwargs) -> None:
+        super().__init__(name, **kwargs)
+        self._low = Decimal(low)
+        self._high = Decimal(high)
+
+    def get_quote(self, amount, source, target):
+        if source == "USD" and self._low <= amount <= self._high:
+            return None
+        return super().get_quote(amount, source, target)
+
+
+class Failing(PaymentNetwork):
+    """A provider whose every request fails, as an unreachable live API does."""
+
+    _name = "Offline"
+
+    def supported_currencies(self) -> set[str]:
+        return {"USD", "CNY"}
+
+    def get_quote(self, amount, source, target):
+        raise RuntimeError("quote request failed")
+
+
+def test_regions_start_at_the_first_amount_that_routed() -> None:
+    """Below the fee floor nothing routed, so no region may claim those amounts."""
+
+    def rails():
+        return [Rail("Pricey", fixed="500")]
+
+    report = _analyze(rails, samples=8, refine_steps=2)
+
+    first_routed = min(
+        amount
+        for amount in breakeven._log_spaced(Decimal("10"), Decimal("100000"), 8)
+        if amount > Decimal("500")
+    )
+    assert report.regions[0].amount_start == first_routed
+    assert report.regions[-1].amount_end == Decimal("100000")
+    assert any("never extend across" in caveat for caveat in report.caveats)
+
+
+def test_an_unroutable_sample_splits_regions_instead_of_bridging_them() -> None:
+    """A gap in the scan must stay a gap, not be painted over by a neighbour."""
+    samples = breakeven._log_spaced(Decimal("10"), Decimal("100000"), 12)
+    blackout = samples[5]
+
+    def rails():
+        return [Blackout("Only", low=str(blackout), high=str(blackout), fixed="1")]
+
+    report = _analyze(rails, samples=12, refine_steps=2)
+
+    assert [region.signature[1] for region in report.regions] == [("Only",), ("Only",)]
+    before, after = report.regions
+    assert before.amount_end == samples[4]
+    assert after.amount_start == samples[6]
+    assert not any(
+        region.amount_start <= blackout <= region.amount_end for region in report.regions
+    )
+
+
+def test_a_winner_beyond_an_unroutable_sample_is_not_hidden() -> None:
+    """The route that wins above a gap must still appear in the regions."""
+    samples = breakeven._log_spaced(Decimal("10"), Decimal("100000"), 12)
+    # The analytic crossing is 4000; black out the first sample above it so no
+    # adjacent routed pair straddles the change of winner.
+    blackout = next(amount for amount in samples if amount > Decimal("4000"))
+
+    def rails():
+        return [
+            Blackout("FlatFee", low=str(blackout), high=str(blackout), fixed="40"),
+            Blackout("SpreadHeavy", low=str(blackout), high=str(blackout), spread="0.01"),
+        ]
+
+    report = _analyze(rails, samples=12, refine_steps=4)
+
+    assert report.crossovers == ()
+    assert [region.signature[1] for region in report.regions] == [
+        ("SpreadHeavy",),
+        ("FlatFee",),
+    ]
+    assert report.regions[0].amount_end < blackout < report.regions[1].amount_start
+
+
+def test_provider_failures_are_reported_once_across_every_build() -> None:
+    def rails():
+        return [*_crossing_rails(), Failing()]
+
+    report = _analyze(rails, samples=6, refine_steps=2)
+
+    # Every build hits the same four corridor failures (self-loops included);
+    # each is reported once, not once per build.
+    assert report.builds > 1
+    pairs = [(warning.from_currency, warning.to_currency) for warning in report.warnings]
+    assert sorted(pairs) == [("CNY", "CNY"), ("CNY", "USD"), ("USD", "CNY"), ("USD", "USD")]
+    assert {(warning.network, warning.reason) for warning in report.warnings} == {
+        ("Offline", "quote request failed"),
+    }
+
+
+def test_a_clean_scan_reports_no_warnings() -> None:
+    report = _analyze(_crossing_rails, samples=6, refine_steps=2)
+
+    assert report.warnings == ()
+
+
+def test_a_single_routable_sample_still_yields_a_region() -> None:
+    """One observation is a point region, never a report of no route at all."""
+
+    def rails():
+        return [Rail("Pricey", fixed="50000")]
+
+    report = _analyze(rails, samples=12, refine_steps=2)
+
+    assert len(report.regions) == 1
+    region = report.regions[0]
+    assert region.amount_start == region.amount_end == Decimal("100000")
+    assert region.signature[1] == ("Pricey",)
+
+
+def test_a_crossover_at_the_last_routed_sample_keeps_the_new_winner() -> None:
+    """Without bisection the crossing sits on the sample that saw the new winner."""
+    samples = breakeven._log_spaced(Decimal("10"), Decimal("100000"), 12)
+    above = next(amount for amount in samples if amount > Decimal("4000"))
+    blackout = samples[samples.index(above) + 1]
+
+    def rails():
+        return [
+            Blackout("FlatFee", low=str(blackout), high=str(blackout), fixed="40"),
+            Blackout("SpreadHeavy", low=str(blackout), high=str(blackout), spread="0.01"),
+        ]
+
+    report = _analyze(rails, samples=12, refine_steps=0)
+
+    assert [crossover.amount for crossover in report.crossovers] == [above]
+    assert [region.signature[1] for region in report.regions] == [
+        ("SpreadHeavy",),
+        ("FlatFee",),
+        ("FlatFee",),
+    ]
+    assert report.regions[1].amount_start == report.regions[1].amount_end == above

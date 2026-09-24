@@ -156,6 +156,18 @@ bracket alongside the figure and says so, and it flags when the fees producing
 a crossing are scenario assumptions — in that case the boundary is a property
 of the model, not a measured market fact.
 
+Regions are built only across runs of consecutive samples that routed. A
+sample with no route — below a fee floor, or where every provider failed —
+interrupts coverage: no region extends across it, the outer regions start and
+end at the first and last routable samples rather than at the requested
+bounds, and two runs are never merged even when the same route wins both. A
+lone routable sample becomes a single-amount region rather than disappearing.
+
+Every build's provider failures are kept, reported once each, in the report's
+`warnings`; the regime map and the rate-date comparison do the same. A
+provider that failed changes which route can win, so an analysis never drops
+that disclosure just because it performed many builds.
+
 ## Two-dimensional regime analysis
 
 `regime.py` combines the amount and preference axes, whose costs are

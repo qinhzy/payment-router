@@ -169,3 +169,13 @@ def test_live_fx_keeps_live_quoting_networks() -> None:
 
     assert session.warnings == ()
     assert session.router.find_route("USD", "CNY", Decimal("1000"), RoutingPreference()) is not None
+
+
+def test_merge_warnings_reports_each_failure_once_in_first_seen_order() -> None:
+    first = service.BuildWarning("Wise", "USD", "CNY", "quote request failed")
+    second = service.BuildWarning("Wise", "USD", "EUR", "quote request failed")
+    third = service.BuildWarning("SWIFT", "USD", "CNY", "timeout")
+
+    merged = service.merge_warnings((first, second), (second, first), (), (third,))
+
+    assert merged == (first, second, third)

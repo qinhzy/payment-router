@@ -111,6 +111,16 @@ def parse_amount(raw_amount: str) -> Decimal:
     return amount
 
 
+def merge_warnings(*groups: tuple[BuildWarning, ...]) -> tuple[BuildWarning, ...]:
+    """Combine warnings from several graph builds, keeping first-seen order.
+
+    Analyses that build one graph per sampled amount see the same provider
+    failure once per build; reporting it once keeps the disclosure readable
+    without hiding a failure that only some builds hit.
+    """
+    return tuple(dict.fromkeys(warning for group in groups for warning in group))
+
+
 def no_route_message(source_currency: str, target_currency: str, amount: Decimal) -> str:
     """The user-facing sentence shared by every frontend when routing fails."""
     return f"No route found from {source_currency} to {target_currency} for {amount}."

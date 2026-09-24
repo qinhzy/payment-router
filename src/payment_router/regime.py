@@ -20,7 +20,7 @@ from payment_router.analysis import RouteSignature, route_signature
 from payment_router.breakeven import _log_spaced
 from payment_router.core.models import DataSource, Route
 from payment_router.router import RoutingPreference
-from payment_router.service import build_session
+from payment_router.service import BuildWarning, build_session, merge_warnings
 
 DEFAULT_AMOUNT_SAMPLES = 12
 DEFAULT_WEIGHT_STEPS = 60
@@ -65,6 +65,8 @@ class RegimeMap:
     weight_steps: int
     builds: int
     caveats: tuple[str, ...]
+    # Provider failures from every amount column, reported once each.
+    warnings: tuple[BuildWarning, ...] = ()
 
 
 async def analyze(
@@ -93,6 +95,7 @@ async def analyze(
     cost_weights = tuple(index / weight_steps for index in range(weight_steps + 1))
     columns: list[list[Route | None]] = []
     winners_by_signature: dict[RouteSignature, Route] = {}
+    warnings: list[tuple[BuildWarning, ...]] = []
 
     # This loop order is the provider-load contract: one graph per amount,
     # followed by a free, in-memory preference sweep on that same router.
@@ -103,6 +106,7 @@ async def analyze(
             str(amount),
             networks=networks_factory(),
         )
+        warnings.append(session.warnings)
         column: list[Route | None] = []
         for cost_weight in cost_weights:
             route = session.router.find_route(
@@ -150,6 +154,7 @@ async def analyze(
         weight_steps=weight_steps,
         builds=len(amounts),
         caveats=_caveats_for(grid, winners),
+        warnings=merge_warnings(*warnings),
     )
 
 

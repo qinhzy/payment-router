@@ -313,6 +313,8 @@ def compare_command(
         _print_error(f"Historical rates unavailable: {error}")
         raise typer.Exit(code=1) from None
 
+    if report.warnings:
+        _print_build_warnings(report.warnings)
     if report.baseline.route is None or report.candidate.route is None:
         _print_error(
             service.no_route_message(
@@ -431,6 +433,8 @@ def breakeven_command(
         _print_error(str(error))
         raise typer.Exit(code=1) from None
 
+    if report.warnings:
+        _print_build_warnings(report.warnings)
     if not report.regions:
         _print_error(
             f"No route found from {report.source_currency} to "
@@ -529,6 +533,8 @@ def regime_command(
         _print_error(str(error))
         raise typer.Exit(code=1) from None
 
+    if report.warnings:
+        _print_build_warnings(report.warnings)
     if not report.winners:
         _print_error(
             f"No route found from {report.source_currency} to "

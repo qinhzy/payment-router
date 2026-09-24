@@ -156,6 +156,7 @@ def comparison_to_json(report: ComparisonReport) -> dict[str, object]:
             "route_changed": report.route_changed,
         },
         "caveats": list(report.caveats),
+        "warnings": [warning_to_json(warning) for warning in report.warnings],
     }
 
 
@@ -191,6 +192,7 @@ def breakeven_to_json(report: BreakevenReport) -> dict[str, object]:
         "crossovers": [crossover_to_json(crossover) for crossover in report.crossovers],
         "builds": report.builds,
         "caveats": list(report.caveats),
+        "warnings": [warning_to_json(warning) for warning in report.warnings],
     }
 
 
@@ -255,4 +257,5 @@ def regime_to_json(report: RegimeMap) -> dict[str, object]:
         ],
         "builds": report.builds,
         "caveats": list(report.caveats),
+        "warnings": [warning_to_json(warning) for warning in report.warnings],
     }
