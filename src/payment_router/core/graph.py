@@ -32,6 +32,19 @@ class NetworkEdge:
     amount_at_send: Decimal
 
 
+class QuoteTimeoutError(TimeoutError):
+    """A network did not answer within the graph's quote timeout.
+
+    Carries ``code`` and ``params`` like the simulator's other statements, so
+    a frontend can show the failure in another language.
+    """
+
+    def __init__(self, seconds: float) -> None:
+        super().__init__(f"quote timed out after {seconds:g} seconds")
+        self.code = "quote_timeout"
+        self.params = {"seconds": f"{seconds:g}"}
+
+
 class PaymentGraph:
     def __init__(
         self,
@@ -192,9 +205,7 @@ class PaymentGraph:
                     timeout=self._quote_timeout_seconds,
                 )
             except TimeoutError as exc:
-                raise TimeoutError(
-                    f"quote timed out after {self._quote_timeout_seconds:g} seconds"
-                ) from exc
+                raise QuoteTimeoutError(self._quote_timeout_seconds) from exc
             return self._validate_quote(awaited_result)
         return self._validate_quote(result)
 

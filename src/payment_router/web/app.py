@@ -4,18 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import time
 from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 from importlib.metadata import version as distribution_version
 from pathlib import Path
 from typing import Annotated, Literal, Protocol
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -45,6 +47,34 @@ market. A refresh is skipped entirely unless the active source is live and
 was fetched before today.
 """
 
+QUICK_AMOUNTS_USD = (250, 500, 1000, 2500, 5000)
+_NICE_STEPS = (Decimal(1), Decimal(2), Decimal("2.5"), Decimal(5))
+
+
+def _nice_amount(value: Decimal) -> Decimal:
+    """The 1, 2, 2.5 or 5 times a power of ten nearest to ``value`` on a log scale."""
+    exponent = value.adjusted()
+    candidates = [
+        step * Decimal(10) ** power
+        for power in (exponent - 1, exponent, exponent + 1)
+        for step in _NICE_STEPS
+    ]
+    return min(candidates, key=lambda candidate: abs(math.log(candidate / value)))
+
+
+def quick_amounts(currency: str) -> list[str]:
+    """Round-number amount presets of a similar size in ``currency``.
+
+    The USD ladder is converted at the active mid-rate and snapped to a
+    round figure, so a CNY sender is offered 2,000 rather than 250 or an
+    unhelpful 1,785.71. These are input conveniences, not quotes; the console
+    never presents them as prices.
+    """
+    rate = fx.get_mid_rate("USD", currency)
+    values = [_nice_amount(Decimal(amount) * rate) for amount in QUICK_AMOUNTS_USD]
+    return [format(value.normalize(), "f") for value in dict.fromkeys(values)]
+
+
 _CurrencyParam = Annotated[str, Query(min_length=3, max_length=3)]
 _AmountParam = Annotated[str, Query(description="Amount to send, as a decimal string.")]
 
@@ -72,6 +102,32 @@ def _default_explainer() -> Explainer | None:
     from payment_router.web.ai import AIExplainer
 
     return AIExplainer.try_create()
+
+
+class ApiError(HTTPException):
+    """An HTTP error whose message also carries a stable code and parameters.
+
+    ``detail`` stays the English sentence every client already reads; the
+    code lets the console show the same message in another language.
+    """
+
+    def __init__(
+        self,
+        status_code: int,
+        detail: str,
+        *,
+        code: str | None = None,
+        params: dict[str, str] | None = None,
+    ) -> None:
+        super().__init__(status_code=status_code, detail=detail)
+        self.code = code
+        self.params = params or {}
+
+
+def _request_error(error: ValueError) -> ApiError:
+    """A rejected request, with its code when the error declares one."""
+    code, params = service.error_code(error)
+    return ApiError(400, str(error), code=code, params=params)
 
 
 class ExplainRequest(BaseModel):
@@ -214,6 +270,21 @@ def create_app(
     cache = _SessionCache(ttl_seconds=quote_ttl_seconds)
     explainer = explainer_factory()
 
+    @application.exception_handler(ApiError)
+    async def api_error(_request: Request, error: ApiError) -> JSONResponse:
+        return JSONResponse(
+            status_code=error.status_code,
+            content={"detail": error.detail, "code": error.code, "params": error.params},
+        )
+
+    def no_route(source: str, target: str, amount) -> ApiError:
+        return ApiError(
+            404,
+            service.no_route_message(source, target, amount),
+            code="no_route",
+            params={"source": source, "target": target, "amount": str(amount)},
+        )
+
     async def build_session(
         source: str,
         target: str,
@@ -249,7 +320,7 @@ def create_app(
                 if fx.generation() == fx_generation:
                     break
         except service.RoutingRequestError as error:
-            raise HTTPException(status_code=400, detail=str(error)) from None
+            raise _request_error(error) from None
         quotes_meta: dict[str, object] = {
             "quoted_at": entry.quoted_at.isoformat(timespec="seconds"),
             "from_cache": from_cache,
@@ -257,15 +328,8 @@ def create_app(
         }
         return entry.session, quotes_meta
 
-    def no_route_error(session: service.RoutingSession) -> HTTPException:
-        return HTTPException(
-            status_code=404,
-            detail=service.no_route_message(
-                session.source_currency,
-                session.target_currency,
-                session.amount,
-            ),
-        )
+    def no_route_error(session: service.RoutingSession) -> ApiError:
+        return no_route(session.source_currency, session.target_currency, session.amount)
 
     # The network roster cannot change over the app's lifetime; build it once.
     networks_snapshot = networks_factory()
@@ -298,6 +362,14 @@ def create_app(
         fx_status = fx.current_status()
         return {
             **static_meta,
+            # Derived from the active rate table, so it is computed per request.
+            # A currency the table cannot price gets none; the console then
+            # falls back to its default ladder instead of the page failing.
+            "quick_amounts": {
+                currency: quick_amounts(currency)
+                for currency in static_meta["currencies"]
+                if currency in fx.supported_currencies()
+            },
             "fx": {
                 "mode": fx_status.mode,
                 "requested_mode": fx_status.requested_mode,
@@ -307,6 +379,8 @@ def create_app(
                 "stale": fx_status.stale,
                 "fallback": fx_status.fallback,
                 "detail": fx_status.detail,
+                "code": fx_status.code,
+                "params": dict(fx_status.params),
             },
         }
 
@@ -435,25 +509,18 @@ def create_app(
                 against_date=against,
                 profile=profile,
             )
-        except service.RoutingRequestError as error:
-            raise HTTPException(status_code=400, detail=str(error)) from None
         except ValueError as error:
-            raise HTTPException(status_code=400, detail=str(error)) from None
+            raise _request_error(error) from None
         except fx.FxLiveUnavailableError as error:
-            raise HTTPException(
-                status_code=503,
-                detail=f"Historical rates unavailable: {error}",
+            raise ApiError(
+                503,
+                f"Historical rates unavailable: {error}",
+                code="historical_unavailable",
+                params=fx.reason_params(error),
             ) from None
 
         if report.baseline.route is None or report.candidate.route is None:
-            raise HTTPException(
-                status_code=404,
-                detail=service.no_route_message(
-                    report.source_currency,
-                    report.target_currency,
-                    report.amount,
-                ),
-            )
+            raise no_route(report.source_currency, report.target_currency, report.amount)
         return schemas.comparison_to_json(report)
 
     @application.get("/api/breakeven")
@@ -479,18 +546,16 @@ def create_app(
                 samples=samples,
                 refine_steps=refine,
             )
-        except service.RoutingRequestError as error:
-            raise HTTPException(status_code=400, detail=str(error)) from None
         except ValueError as error:
-            raise HTTPException(status_code=400, detail=str(error)) from None
+            raise _request_error(error) from None
 
         if not report.regions:
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    f"No route found from {report.source_currency} to "
-                    f"{report.target_currency} at any tested amount."
-                ),
+            raise ApiError(
+                404,
+                f"No route found from {report.source_currency} to "
+                f"{report.target_currency} at any tested amount.",
+                code="breakeven_no_route",
+                params={"source": report.source_currency, "target": report.target_currency},
             )
         return schemas.breakeven_to_json(report)
 
@@ -521,30 +586,27 @@ def create_app(
 
         try:
             report = await asyncio.to_thread(run_analysis)
-        except service.RoutingRequestError as error:
-            raise HTTPException(status_code=400, detail=str(error)) from None
         except ValueError as error:
-            raise HTTPException(status_code=400, detail=str(error)) from None
+            raise _request_error(error) from None
 
         if not report.winners:
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    f"No route found from {report.source_currency} to "
-                    f"{report.target_currency} in any sampled cell."
-                ),
+            raise ApiError(
+                404,
+                f"No route found from {report.source_currency} to "
+                f"{report.target_currency} in any sampled cell.",
+                code="regime_no_route",
+                params={"source": report.source_currency, "target": report.target_currency},
             )
         return schemas.regime_to_json(report)
 
     @application.post("/api/explain")
     async def explain(request: ExplainRequest) -> StreamingResponse:
         if explainer is None:
-            raise HTTPException(
-                status_code=503,
-                detail=(
-                    "AI explanations are not configured. Set ANTHROPIC_API_KEY "
-                    "(or sign in with `ant auth login`) and restart the console."
-                ),
+            raise ApiError(
+                503,
+                "AI explanations are not configured. Set ANTHROPIC_API_KEY "
+                "(or sign in with `ant auth login`) and restart the console.",
+                code="ai_not_configured",
             )
 
         def sse_event(event: dict[str, object]) -> str:

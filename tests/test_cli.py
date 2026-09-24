@@ -400,3 +400,31 @@ def test_loopback_detection(host: str, loopback: bool) -> None:
     from payment_router.cli import _is_loopback
 
     assert _is_loopback(host) is loopback
+
+
+class _Offline(PaymentNetwork):
+    """Fails every corridor, as an unreachable live provider does."""
+
+    _name = "Offline"
+
+    def supported_currencies(self) -> set[str]:
+        return {"USD", "EUR", "GBP", "CNY", "HKD", "SGD"}
+
+    def get_quote(self, amount, from_currency, to_currency):
+        raise RuntimeError("quote request failed")
+
+
+def test_provider_warnings_are_grouped_per_network_and_reason(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "payment_router.cli._instantiate_networks",
+        lambda: [*_stub_networks(), _Offline()],
+    )
+
+    result = runner.invoke(app, ["route", "USD", "CNY", "100"], env={"COLUMNS": "240"})
+
+    assert result.exit_code == 0
+    assert "Provider Warnings" in result.output
+    # 36 failing corridors (self-loops included) collapse into one row.
+    assert result.output.count("quote request failed") == 1
+    assert "36: " in result.output
+    assert "(+30 more)" in result.output

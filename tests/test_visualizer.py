@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from payment_router.core.models import DataSource, Hop, Route
 from payment_router.router import RoutingPreference
-from payment_router.visualizer import route_to_mermaid, routes_to_comparison_table
+from payment_router.visualizer import format_hours, route_to_mermaid, routes_to_comparison_table
 
 
 def _hop(
@@ -139,3 +139,21 @@ def test_routes_to_comparison_table_preserves_route_order() -> None:
     assert lines[0] == "| Route | Total Fee (USD) | Total Time (hours) | Final Amount | Path |"
     assert "| Route 1 | 5.00 | 1.0 | 695.00 CNY | USD → CNY |" in lines[2]
     assert "| Route 2 | 5.00 | 4.0 | 700.00 CNY | USD → EUR → CNY |" in lines[3]
+
+
+def test_format_hours_keeps_three_decimals_from_one_hour_up() -> None:
+    assert format_hours(Decimal("24")) == "24.0"
+    assert format_hours(Decimal("27.34251")) == "27.343"
+    assert format_hours(Decimal("-1.5")) == "-1.5"
+
+
+def test_format_hours_keeps_seconds_exact_below_one_hour() -> None:
+    ten_seconds = Decimal(10) / Decimal(3600)
+
+    formatted = format_hours(ten_seconds)
+
+    # Three decimals (0.003 h) would read back as 10.8 seconds.
+    assert formatted == "0.002778"
+    assert round(float(formatted) * 3600) == 10
+    assert format_hours(Decimal(0)) == "0.0"
+    assert format_hours(Decimal("0.5")) == "0.5"

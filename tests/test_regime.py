@@ -169,3 +169,41 @@ def test_regions_and_region_grid_cover_every_routed_cell() -> None:
 def test_rejects_an_unusable_grid(kwargs: dict, message: str) -> None:
     with pytest.raises(ValueError, match=message):
         _analyze(**kwargs)
+
+
+class Offline(PaymentNetwork):
+    """A provider whose every request fails, as an unreachable live API does."""
+
+    _name = "Offline"
+
+    def supported_currencies(self) -> set[str]:
+        return {"USD", "CNY"}
+
+    def get_quote(self, amount, source, target):
+        raise RuntimeError("quote request failed")
+
+
+def test_provider_failures_are_reported_once_across_amount_columns() -> None:
+    def factory() -> list[PaymentNetwork]:
+        return [*_crossing_rails("40")(), Offline()]
+
+    report = asyncio.run(
+        regime.analyze(
+            "USD",
+            "CNY",
+            factory,
+            min_amount=Decimal("100"),
+            max_amount=Decimal("100000"),
+            amount_samples=5,
+            weight_steps=4,
+        )
+    )
+
+    assert report.builds == 5
+    pairs = sorted((warning.from_currency, warning.to_currency) for warning in report.warnings)
+    assert pairs == [("CNY", "CNY"), ("CNY", "USD"), ("USD", "CNY"), ("USD", "USD")]
+    assert {warning.network for warning in report.warnings} == {"Offline"}
+
+
+def test_a_clean_map_reports_no_warnings() -> None:
+    assert _analyze().warnings == ()

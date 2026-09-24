@@ -99,6 +99,49 @@ def test_build_session_normalizes_request_and_collects_warnings() -> None:
     assert [hop.network_name for hop in route.hops] == ["Demo"]
 
 
+def test_build_warnings_keep_the_codes_that_failures_declare() -> None:
+    class ProviderDown(RuntimeError):
+        def __init__(self) -> None:
+            super().__init__("provider returned HTTP 503")
+            self.code = "provider_http_error"
+            self.params = {"status": 503, "detail": "maintenance"}
+
+    class ClientError(RuntimeError):
+        # Like an HTTP client's error: a ``code`` that is a status, not a
+        # statement a frontend could translate.
+        code = 404
+        params = None
+
+    networks = [
+        FakeNetwork(
+            "Demo",
+            {"USD", "CNY", "EUR"},
+            {
+                ("USD", "CNY"): make_quote("Demo", "5", "1", "7.0"),
+                ("CNY", "USD"): ProviderDown(),
+                ("USD", "EUR"): ClientError("not found"),
+                ("EUR", "USD"): RuntimeError("corridor offline"),
+            },
+        )
+    ]
+
+    session = asyncio.run(build_session("USD", "CNY", "100", networks=networks))
+
+    assert {
+        (warning.from_currency, warning.reason, warning.code, warning.params)
+        for warning in session.warnings
+    } == {
+        (
+            "CNY",
+            "provider returned HTTP 503",
+            "provider_http_error",
+            (("status", "503"), ("detail", "maintenance")),
+        ),
+        ("USD", "not found", None, ()),
+        ("EUR", "corridor offline", None, ()),
+    }
+
+
 def test_build_session_routes_hkd_to_cny_over_cips() -> None:
     session = asyncio.run(build_session("HKD", "CNY", "10000", networks=[CIPSNetwork()]))
 
@@ -156,6 +199,7 @@ def test_historical_fx_excludes_live_quoting_networks(monkeypatch) -> None:
     assert networks_used == {"SWIFT"}
     excluded = [w for w in session.warnings if "historical run" in w.reason]
     assert [w.network for w in excluded] == ["Wise"]
+    assert [w.code for w in excluded] == ["historical_excluded"]
 
 
 def test_live_fx_keeps_live_quoting_networks() -> None:
@@ -169,3 +213,27 @@ def test_live_fx_keeps_live_quoting_networks() -> None:
 
     assert session.warnings == ()
     assert session.router.find_route("USD", "CNY", Decimal("1000"), RoutingPreference()) is not None
+
+
+def test_merge_warnings_reports_each_failure_once_in_first_seen_order() -> None:
+    first = service.BuildWarning("Wise", "USD", "CNY", "quote request failed")
+    second = service.BuildWarning("Wise", "USD", "EUR", "quote request failed")
+    third = service.BuildWarning("SWIFT", "USD", "CNY", "timeout")
+
+    merged = service.merge_warnings((first, second), (second, first), (), (third,))
+
+    assert merged == (first, second, third)
+
+
+def test_group_warnings_collapses_one_reason_per_network() -> None:
+    down = [service.BuildWarning("Wise", "USD", target, "quote request failed") for target in "AB"]
+    other = service.BuildWarning("Wise", "USD", "C", "amount too large")
+    swift = service.BuildWarning("SWIFT", "USD", "A", "quote request failed")
+
+    groups = service.group_warnings((down[0], swift, other, down[1]))
+
+    assert [(group.network, group.reason, group.pairs) for group in groups] == [
+        ("Wise", "quote request failed", (("USD", "A"), ("USD", "B"))),
+        ("SWIFT", "quote request failed", (("USD", "A"),)),
+        ("Wise", "amount too large", (("USD", "C"),)),
+    ]

@@ -8,6 +8,7 @@ to render the results and how to report :class:`RoutingRequestError`.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
@@ -24,17 +25,62 @@ from payment_router.router import PaymentRouter, RoutingPreference
 
 
 class RoutingRequestError(ValueError):
-    """A routing request that cannot be fulfilled because of invalid input."""
+    """A routing request that cannot be fulfilled because of invalid input.
+
+    ``code`` and ``params`` identify the message independently of its English
+    wording, so a frontend can show it in another language.
+    """
+
+    def __init__(self, message: str, *, code: str | None = None, **params: object) -> None:
+        super().__init__(message)
+        self.code = code
+        self.params = {name: str(value) for name, value in params.items()}
 
 
 @dataclass(frozen=True, slots=True)
 class BuildWarning:
-    """A provider failure captured while building the payment graph."""
+    """A provider failure captured while building the payment graph.
+
+    ``code`` and ``params`` are set when the failure identifies itself (the
+    simulator's own statements, and exceptions carrying ``code`` and
+    ``params``), so a frontend can translate the reason. An unclassified
+    exception keeps only its English text.
+    """
 
     network: str
     from_currency: str
     to_currency: str
     reason: str
+    code: str | None = None
+    params: tuple[tuple[str, str], ...] = ()
+
+
+def error_code(exception: BaseException) -> tuple[str | None, dict[str, str]]:
+    """An exception's stable code and parameters, when it declares them.
+
+    Only a string ``code`` with a mapping of ``params`` counts: an unrelated
+    ``code`` attribute (an HTTP status on a client error, say) is not a
+    statement a frontend could translate.
+    """
+    code = getattr(exception, "code", None)
+    params = getattr(exception, "params", None)
+    if not isinstance(code, str) or not isinstance(params, Mapping):
+        return None, {}
+    return code, {str(name): str(value) for name, value in params.items()}
+
+
+def _warning_for(
+    network: str, from_currency: str, to_currency: str, exception: Exception
+) -> BuildWarning:
+    code, params = error_code(exception)
+    return BuildWarning(
+        network=network,
+        from_currency=from_currency,
+        to_currency=to_currency,
+        reason=str(exception),
+        code=code,
+        params=tuple(params.items()),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +131,7 @@ def networks_for_active_fx(
                 "excluded from a historical run: this provider quotes at request "
                 "time and has no rate for a past date"
             ),
+            code="historical_excluded",
         )
         for network in networks
         if network.quotes_at_request_time()
@@ -103,12 +150,51 @@ def parse_amount(raw_amount: str) -> Decimal:
     try:
         amount = Decimal(raw_amount)
     except InvalidOperation:
-        raise RoutingRequestError("Amount must be a valid decimal number.") from None
+        raise RoutingRequestError(
+            "Amount must be a valid decimal number.", code="amount_invalid"
+        ) from None
     if not amount.is_finite():
-        raise RoutingRequestError("Amount must be a valid decimal number.")
+        raise RoutingRequestError("Amount must be a valid decimal number.", code="amount_invalid")
     if amount <= 0:
-        raise RoutingRequestError("Amount must be greater than zero.")
+        raise RoutingRequestError("Amount must be greater than zero.", code="amount_not_positive")
     return amount
+
+
+@dataclass(frozen=True, slots=True)
+class WarningGroup:
+    """Provider failures that share a network and a reason."""
+
+    network: str
+    reason: str
+    pairs: tuple[tuple[str, str], ...]
+
+
+def group_warnings(warnings: tuple[BuildWarning, ...]) -> tuple[WarningGroup, ...]:
+    """Collapse failures by network and reason, keeping first-seen order.
+
+    An unreachable provider fails every corridor with the same reason; one
+    entry per network and reason keeps a failure that differs from it visible
+    instead of burying it among dozens of identical rows.
+    """
+    pairs: dict[tuple[str, str], list[tuple[str, str]]] = {}
+    for warning in warnings:
+        pairs.setdefault((warning.network, warning.reason), []).append(
+            (warning.from_currency, warning.to_currency)
+        )
+    return tuple(
+        WarningGroup(network=network, reason=reason, pairs=tuple(corridors))
+        for (network, reason), corridors in pairs.items()
+    )
+
+
+def merge_warnings(*groups: tuple[BuildWarning, ...]) -> tuple[BuildWarning, ...]:
+    """Combine warnings from several graph builds, keeping first-seen order.
+
+    Analyses that build one graph per sampled amount see the same provider
+    failure once per build; reporting it once keeps the disclosure readable
+    without hiding a failure that only some builds hit.
+    """
+    return tuple(dict.fromkeys(warning for group in groups for warning in group))
 
 
 def no_route_message(source_currency: str, target_currency: str, amount: Decimal) -> str:
@@ -167,7 +253,10 @@ async def build_session(
         supported_list = ", ".join(sorted(supported))
         raise RoutingRequestError(
             "Unsupported currency code(s): "
-            f"{', '.join(unsupported)}. Supported currencies: {supported_list}."
+            f"{', '.join(unsupported)}. Supported currencies: {supported_list}.",
+            code="unsupported_currency",
+            currencies=", ".join(unsupported),
+            supported=supported_list,
         )
 
     graph = PaymentGraph(
@@ -178,12 +267,7 @@ async def build_session(
     )
     await graph.build()
     warnings = excluded_warnings + tuple(
-        BuildWarning(
-            network=network_name,
-            from_currency=warning_from,
-            to_currency=warning_to,
-            reason=str(exception),
-        )
+        _warning_for(network_name, warning_from, warning_to, exception)
         for network_name, warning_from, warning_to, exception in graph.build_errors
     )
     return RoutingSession(
