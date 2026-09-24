@@ -174,7 +174,7 @@
   "route.hops.other": "{count} hops",
   "route.estimatedTime": "Estimated time",
   "route.timeRange": "range {min} – {max}",
-  "route.timeHours": "{hours} hours",
+  "route.timeNoRange": "no range modelled",
   "route.feeTime": "fee {fee} · {time}",
 
   "hop.hop": "Hop",

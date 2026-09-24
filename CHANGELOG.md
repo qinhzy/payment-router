@@ -94,7 +94,22 @@ All notable user-visible changes are recorded here. The project follows
 - the regime map's vertical axis title collapsed in Chinese: characters could
   wrap between any two glyphs and, without a font's vertical metrics, stacked
   on top of each other. It is kept on one line and set sideways in every
-  language.
+  language;
+- a rate date outside the published series blocked every route search: the
+  browser's own form validation stopped **Find routes** with an untranslated
+  message, although only the rate-date comparison reads that field. Each
+  request is now validated by the fields it uses;
+- times under an hour lost precision: hours were rounded to three decimals, so
+  SEPA Instant's ten seconds (0.003 h) read back as eleven. Below one hour the
+  API, CLI, and Mermaid output keep six decimals (0.002778 h);
+- a route without a modelled time band repeated its headline in raw hours
+  ("20.0 hours" under "20 h"); the tile now says that no range is modelled;
+- evidence badges in the source registry stacked one Chinese glyph per line in
+  their narrow column, and on a phone a very large figure squeezed the tile
+  beside it to a sliver. Badges stay on one line and figures wrap inside
+  their own tile;
+- the scenario summary echoed an amount the form rejects; it shows a dash
+  until the amount is valid.
 
 ### Changed
 

@@ -795,7 +795,8 @@
 
   function updateScenarioSummary() {
     const parsed = parsePositiveAmount(amountInput.value);
-    const amount = parsed ? fmtAmountLabel(parsed.value) : amountInput.value.trim() || "—";
+    // An amount the form would reject is not part of any scenario yet.
+    const amount = parsed ? fmtAmountLabel(parsed.value) : "—";
     const candidateCount = form.elements.top_n.value;
     scenarioSummary.textContent = t("scenario.summary", {
       amount,
@@ -1397,7 +1398,7 @@
               min: humanizeHours(route.total_time_min_hours),
               max: humanizeHours(route.total_time_max_hours),
             })
-          : t("route.timeHours", { hours: route.total_time_hours })
+          : t("route.timeNoRange")
       )
     );
     card.append(stats);

@@ -190,6 +190,10 @@ def test_top_candidates_are_compared_and_each_row_opens_its_route(
     assert rows.count() == page.locator(".route-card").count() >= 2
     assert "top ranked" in rows.nth(0).inner_text()
     assert "(" in rows.nth(1).locator(".candidate-delta").inner_text()
+    # These rails model one delivery time, not a band; the tile says so
+    # rather than repeating the headline figure.
+    time_tile = page.locator(".route-card").first.locator(".stat-tile").nth(2)
+    assert time_tile.locator(".stat-sub").inner_text() == "no range modelled"
 
     page.locator(".rank-button").nth(1).click()
     page.wait_for_timeout(300)
@@ -245,6 +249,7 @@ def test_amounts_accept_grouping_but_reject_ambiguous_input(page: Page, console_
     page.click("#route-button")
     assert page.locator("#amount-error").is_visible()
     assert page.evaluate("document.activeElement.id") == "amount-input"
+    assert page.locator("#scenario-summary").inner_text().startswith("— USD")
 
     page.fill("#amount-input", "2,500")
     page.click("#route-button")
@@ -269,6 +274,25 @@ def test_scan_range_and_rate_date_validate_beside_their_inputs(
     assert page.locator("#range-error").is_visible()
     assert page.evaluate("document.activeElement.id") == "range-max"
     assert page.locator("#alerts").is_hidden()
+
+
+def test_a_rate_date_out_of_range_does_not_block_a_route_search(
+    page: Page, console_url: str
+) -> None:
+    page.goto(console_url)
+    _ready(page)
+
+    # Below the picker's minimum. Only the rate-date comparison reads this
+    # field; the browser's own validation used to stop every search with an
+    # untranslated bubble until it was cleared.
+    page.fill("#on-date", "1998-06-01")
+    page.fill("#amount-input", "2000")
+    with page.expect_request("**/api/route*"):
+        page.click("#route-button")
+    _settle(page)
+
+    assert _query(page.url)["amount"] == "2000"
+    assert page.locator("#date-error").is_hidden()
 
 
 def test_cancelling_a_scan_restores_the_previous_view(page: Page, console_url: str) -> None:
@@ -334,6 +358,11 @@ def test_the_interface_switches_to_chinese_in_place(page: Page, console_url: str
     assert figures
     assert all(figure in chinese_caveat for figure in figures)
     assert page.title().endswith("payment-router 控制台")
+    # Evidence badges keep their label on one line in the narrow column.
+    heights = page.locator(".registry-table .badge").evaluate_all(
+        "(badges) => badges.map((badge) => badge.getBoundingClientRect().height)"
+    )
+    assert heights and max(heights) < 26
 
     page.reload()
     _settle(page)
@@ -366,6 +395,32 @@ def test_phone_layout_fits_the_screen(browser: Browser, console_url: str) -> Non
     brand = page.locator(".brand-name").bounding_box()
     actions = page.locator(".topbar-actions").bounding_box()
     assert brand["x"] + brand["width"] <= actions["x"], "the top bar must not overlap"
+
+    # An enormous figure wraps inside its own tile; the tile beside it keeps
+    # its half of the row. The stub rails charge flat fees, so the response
+    # is given a fee twelve digits long.
+    def enlarge_fee(route) -> None:
+        response = route.fetch()
+        payload = response.json()
+        payload["routes"][0]["total_fee_usd"] = "123456789012.34"
+        route.fulfill(response=response, json=payload)
+
+    page.route("**/api/route*", enlarge_fee)
+    page.fill("#amount-input", "2000")
+    page.click("#route-button")
+    _settle(page)
+    page.unroute("**/api/route*")
+    tiles = page.locator(".route-card .stat-tile")
+    # Figures count up to their value; measure once the fee has arrived.
+    tiles.filter(has_text="123,456,789,012.34").wait_for()
+    widths = tiles.evaluate_all(
+        "(tiles) => tiles.map((tile) => tile.getBoundingClientRect().width)"
+    )
+    assert abs(widths[1] - widths[2]) <= 1
+    assert tiles.evaluate_all(
+        "(tiles) => tiles.every((tile) => tile.scrollWidth <= tile.clientWidth)"
+    )
+    assert page.evaluate("document.documentElement.scrollWidth") == 390
 
     # The widest preset ladder still fits on one line beside its label, in
     # either language.

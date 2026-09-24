@@ -1581,6 +1581,8 @@ main {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  /* A narrow table column must not stack a Chinese label one glyph per line. */
+  white-space: nowrap;
   font-size: 11px;
   font-weight: 650;
   letter-spacing: 0.04em;
@@ -1624,7 +1626,9 @@ main {
 
 .stat-row {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* minmax(0, 1fr): a very large figure wraps inside its tile instead of
+     squeezing the neighbouring tiles to a sliver. */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   border-bottom: 1px solid var(--hairline);
 }
 
@@ -1650,6 +1654,7 @@ main {
   font-weight: 650;
   letter-spacing: -0.02em;
   line-height: 1.15;
+  overflow-wrap: anywhere;
 }
 
 .stat-value .unit {
@@ -2745,7 +2750,7 @@ footer {
   }
 
   .stat-row {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .stat-tile {

@@ -174,7 +174,7 @@
   "route.hops.other": "{count} 跳",
   "route.estimatedTime": "预计时效",
   "route.timeRange": "区间 {min} – {max}",
-  "route.timeHours": "{hours} 小时",
+  "route.timeNoRange": "未建模波动区间",
   "route.feeTime": "费用 {fee} · {time}",
 
   "hop.hop": "跳",
