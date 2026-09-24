@@ -8,6 +8,7 @@ to render the results and how to report :class:`RoutingRequestError`.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
@@ -40,8 +41,10 @@ class RoutingRequestError(ValueError):
 class BuildWarning:
     """A provider failure captured while building the payment graph.
 
-    ``code`` is set when the reason is the simulator's own statement rather
-    than a provider's error text, so a frontend can translate it.
+    ``code`` and ``params`` are set when the failure identifies itself (the
+    simulator's own statements, and exceptions carrying ``code`` and
+    ``params``), so a frontend can translate the reason. An unclassified
+    exception keeps only its English text.
     """
 
     network: str
@@ -49,6 +52,35 @@ class BuildWarning:
     to_currency: str
     reason: str
     code: str | None = None
+    params: tuple[tuple[str, str], ...] = ()
+
+
+def error_code(exception: BaseException) -> tuple[str | None, dict[str, str]]:
+    """An exception's stable code and parameters, when it declares them.
+
+    Only a string ``code`` with a mapping of ``params`` counts: an unrelated
+    ``code`` attribute (an HTTP status on a client error, say) is not a
+    statement a frontend could translate.
+    """
+    code = getattr(exception, "code", None)
+    params = getattr(exception, "params", None)
+    if not isinstance(code, str) or not isinstance(params, Mapping):
+        return None, {}
+    return code, {str(name): str(value) for name, value in params.items()}
+
+
+def _warning_for(
+    network: str, from_currency: str, to_currency: str, exception: Exception
+) -> BuildWarning:
+    code, params = error_code(exception)
+    return BuildWarning(
+        network=network,
+        from_currency=from_currency,
+        to_currency=to_currency,
+        reason=str(exception),
+        code=code,
+        params=tuple(params.items()),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,12 +267,7 @@ async def build_session(
     )
     await graph.build()
     warnings = excluded_warnings + tuple(
-        BuildWarning(
-            network=network_name,
-            from_currency=warning_from,
-            to_currency=warning_to,
-            reason=str(exception),
-        )
+        _warning_for(network_name, warning_from, warning_to, exception)
         for network_name, warning_from, warning_to, exception in graph.build_errors
     )
     return RoutingSession(

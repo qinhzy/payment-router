@@ -211,7 +211,7 @@
   function localizedMessage(namespace, code, params, english) {
     if (lang !== "en" && code) {
       const template = lookup(`${namespace}.${code}`);
-      const values = params || {};
+      const values = withLocalizedReason(params || {});
       // A server of another version may not send every figure the template
       // quotes; its own English sentence is then the only complete one.
       const complete =
@@ -220,6 +220,22 @@
       if (complete) return fill(template, values);
     }
     return english;
+  }
+
+  // A statement may quote the failure behind it ("live rates are unavailable
+  // (request failed: …)"). The quoted failure travels flattened beside the
+  // statement's own parameters: reason (its English text), reason_code, and
+  // reason_<name> for each of its parameters.
+  function withLocalizedReason(values) {
+    if (!values.reason_code) return values;
+    const quoted = {};
+    Object.entries(values).forEach(([name, value]) => {
+      if (name.startsWith("reason_") && name !== "reason_code") quoted[name.slice(7)] = value;
+    });
+    return {
+      ...values,
+      reason: localizedMessage("reason", values.reason_code, quoted, values.reason),
+    };
   }
 
   function localizedCaveats(data) {
@@ -531,7 +547,7 @@
   function groupWarnings(warnings) {
     const groups = new Map();
     warnings.forEach((warning) => {
-      const reason = localizedMessage("warning", warning.code, {}, warning.reason);
+      const reason = localizedMessage("warning", warning.code, warning.params, warning.reason);
       const key = `${warning.network}\u0000${reason}`;
       if (!groups.has(key)) {
         groups.set(key, { network: warning.network, reason, pairs: [] });
@@ -2842,8 +2858,7 @@
       // The top bar and the phone layout's disclaimer carry the same status.
       [$("#fx-chip"), $("#disclaimer-fx")].forEach((chip) => {
         chip.textContent = label;
-        // The detail is the server's own diagnostic, kept verbatim.
-        chip.title = fx.detail || "";
+        chip.title = localizedMessage("fxstatus", fx.code, fx.params, fx.detail || "");
         chip.classList.toggle("chip-warning", Boolean(fx.fallback));
         chip.hidden = false;
       });

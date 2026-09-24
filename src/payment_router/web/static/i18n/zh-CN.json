@@ -310,11 +310,32 @@
   "error.amount_not_positive": "金额必须大于零。",
   "error.unsupported_currency": "不支持的币种：{currencies}。支持的币种：{supported}。",
   "error.no_route": "未找到从 {source} 到 {target}、金额为 {amount} 的路由。",
-  "error.historical_unavailable": "无法获取历史汇率：{detail}",
-  "error.compare_baseline_unavailable": "对比基准需要已发布的汇率，但实时汇率不可用：{detail}",
+  "error.historical_unavailable": "无法获取历史汇率：{reason}",
+  "error.compare_baseline_unavailable": "对比基准需要已发布的汇率，但实时汇率不可用（{reason}）。",
   "error.breakeven_no_route": "在所有测试金额下都找不到从 {source} 到 {target} 的路由。",
   "error.regime_no_route": "在所有采样格中都找不到从 {source} 到 {target} 的路由。",
   "error.ai_not_configured": "AI 解读尚未配置。请设置 ANTHROPIC_API_KEY（或用 `ant auth login` 登录）后重启控制台。",
+  "error.range_order": "扫描终点必须大于起点（当前为 {min} – {max}）。",
+  "error.date_format": "汇率日期必须采用 YYYY-MM-DD 格式：{date}",
+  "error.date_future": "汇率日期不能晚于今天：{date}",
+  "error.date_too_early": "ECB 参考汇率从 {earliest} 开始发布，没有 {date} 的汇率。",
 
-  "warning.historical_excluded": "已从历史汇率计算中排除：该服务按请求时刻报价，没有过去日期的汇率"
+  "warning.historical_excluded": "已从历史汇率计算中排除：该服务按请求时刻报价，没有过去日期的汇率",
+  "warning.provider_timeout": "报价请求超时",
+  "warning.provider_unreachable": "无法连接报价服务",
+  "warning.provider_http_error": "报价服务返回 HTTP {status} 错误：{detail}",
+  "warning.provider_bad_response": "报价服务返回的数据无法使用",
+  "warning.quote_timeout": "{seconds} 秒内没有返回报价",
+
+  "reason.fx_request_failed": "请求 Frankfurter 失败：{error}",
+  "reason.fx_response_invalid": "Frankfurter 返回的数据缺少汇率或日期",
+  "reason.fx_rate_invalid": "{currency} 的汇率不是正数",
+  "reason.fx_response_incomplete": "Frankfurter 返回的数据不完整：{error}",
+
+  "fxstatus.frozen": "可复现的教学取值，不代表当前市场价格。",
+  "fxstatus.fallback": "实时汇率不可用（{reason}），已改用冻结教学汇率表。",
+  "fxstatus.live": "经 Frankfurter 获取的 ECB 参考汇率，日期为 {date}。",
+  "fxstatus.live_stale": "经 Frankfurter 获取的 ECB 参考汇率，日期为 {date}。刷新失败，正在使用缓存的快照。",
+  "fxstatus.historical": "ECB 于 {date} 公布的参考汇率。",
+  "fxstatus.historical_substituted": "ECB 于 {date} 公布的参考汇率。{requested} 没有公布定盘价（周末或节假日），改用此前最近一次公布的汇率。"
 }

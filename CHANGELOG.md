@@ -109,7 +109,18 @@ All notable user-visible changes are recorded here. The project follows
   beside it to a sliver. Badges stay on one line and figures wrap inside
   their own tile;
 - the scenario summary echoed an amount the form rejects; it shows a dash
-  until the amount is valid.
+  until the amount is valid;
+- the Chinese console still showed provider failures ("Wise quote request
+  failed"), the FX source's tooltip, rate-date and scan-range errors, and the
+  cause quoted by the comparison errors in English. Each now carries a stable
+  code and parameters: `WiseAPIError`, the graph's `QuoteTimeoutError`,
+  `FxLiveUnavailableError`, the new `FxDateError`, build warnings (`params`
+  beside `code`), and the FX status in `/api/meta` (`code`, `params`). A
+  comparison error quotes the live-rate failure as `reason`, `reason_code`
+  and `reason_*` parameters, so the quoted cause is translated too; its
+  English now names that cause instead of repeating the fallback sentence.
+  Text quoted from a provider or HTTP client (an HTTP status line) stays
+  verbatim.
 
 ### Changed
 

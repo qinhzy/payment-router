@@ -260,7 +260,13 @@ def test_route_surfaces_provider_warnings() -> None:
     assert response.status_code == 200
     warnings = response.json()["warnings"]
     assert warnings == [
-        {"network": "Flaky", "pair": "USD->CNY", "reason": "provider exploded", "code": None}
+        {
+            "network": "Flaky",
+            "pair": "USD->CNY",
+            "reason": "provider exploded",
+            "code": None,
+            "params": {},
+        }
     ]
 
 
@@ -886,7 +892,13 @@ def test_breakeven_discloses_provider_failures_once() -> None:
     payload = response.json()
     assert payload["builds"] > 1
     assert payload["warnings"] == [
-        {"network": "Flaky", "pair": "USD->CNY", "reason": "quote request failed", "code": None}
+        {
+            "network": "Flaky",
+            "pair": "USD->CNY",
+            "reason": "quote request failed",
+            "code": None,
+            "params": {},
+        }
     ]
 
 
@@ -910,7 +922,13 @@ def test_regime_discloses_provider_failures_once() -> None:
     payload = response.json()
     assert payload["builds"] == 3
     assert payload["warnings"] == [
-        {"network": "Flaky", "pair": "USD->CNY", "reason": "quote request failed", "code": None}
+        {
+            "network": "Flaky",
+            "pair": "USD->CNY",
+            "reason": "quote request failed",
+            "code": None,
+            "params": {},
+        }
     ]
 
 

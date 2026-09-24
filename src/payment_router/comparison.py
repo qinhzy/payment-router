@@ -237,11 +237,14 @@ async def _compare_under_lock(
         if against_date is None:
             baseline_status = await _activate("live", timeout_seconds=timeout_seconds)
             if baseline_status.fallback:
+                # The fallback status quotes why live rates failed; the frozen
+                # table it fell back to is no baseline, so only the cause is kept.
+                failure = {"reason": baseline_status.detail, **dict(baseline_status.params)}
                 raise RoutingRequestError(
                     "A comparison baseline needs published rates, but live rates "
-                    f"are unavailable: {baseline_status.detail}",
+                    f"are unavailable ({failure['reason']}).",
                     code="compare_baseline_unavailable",
-                    detail=baseline_status.detail,
+                    **failure,
                 )
             baseline_label = "latest"
         else:

@@ -270,11 +270,21 @@ always agree on routing behavior and error messages.
   caveat is an `analysis.Caveat`, a `str` that also carries a stable code and
   its parameters, and the JSON returns `caveat_codes` index-aligned with the
   English `caveats`. Errors carry `code` and `params` beside the English
-  `detail`. The console renders a statement from its code when a translation
-  with every parameter exists and otherwise shows the backend's sentence, so
-  a translation can neither drift from which statement applies nor quote a
-  different figure. Tests keep both catalogs' keys and placeholders in step
-  and require a Chinese template for every registered caveat and error code.
+  `detail`, and so do provider failures (`WiseAPIError`, the graph's
+  `QuoteTimeoutError`), live-rate failures (`FxLiveUnavailableError`), rate
+  dates (`FxDateError`), build warnings, and the FX status in `/api/meta`.
+  `service.error_code` reads a code only when an exception declares a string
+  code with a mapping of parameters, so an unrelated `code` attribute (an
+  HTTP status) is never mistaken for one. A statement that quotes a failure
+  ("live rates are unavailable (…)") carries it flattened as `reason`,
+  `reason_code`, and `reason_*` parameters, and the console translates both.
+  Text quoted from a provider or HTTP client stays verbatim. The console
+  renders a statement from its code when a translation with every parameter
+  exists and otherwise shows the backend's sentence, so a translation can
+  neither drift from which statement applies nor quote a different figure.
+  Tests keep both catalogs' keys and placeholders in step, require a Chinese
+  template for every code the backend assigns, and drive each failure and
+  FX status through its real code path to check the parameters it sends.
 - `/api/meta` offers amount presets per currency: a USD ladder converted at
   the active mid-rate and snapped to 1, 2, 2.5 or 5 times a power of ten.
   They are input conveniences and are never presented as quotes; the

@@ -99,6 +99,49 @@ def test_build_session_normalizes_request_and_collects_warnings() -> None:
     assert [hop.network_name for hop in route.hops] == ["Demo"]
 
 
+def test_build_warnings_keep_the_codes_that_failures_declare() -> None:
+    class ProviderDown(RuntimeError):
+        def __init__(self) -> None:
+            super().__init__("provider returned HTTP 503")
+            self.code = "provider_http_error"
+            self.params = {"status": 503, "detail": "maintenance"}
+
+    class ClientError(RuntimeError):
+        # Like an HTTP client's error: a ``code`` that is a status, not a
+        # statement a frontend could translate.
+        code = 404
+        params = None
+
+    networks = [
+        FakeNetwork(
+            "Demo",
+            {"USD", "CNY", "EUR"},
+            {
+                ("USD", "CNY"): make_quote("Demo", "5", "1", "7.0"),
+                ("CNY", "USD"): ProviderDown(),
+                ("USD", "EUR"): ClientError("not found"),
+                ("EUR", "USD"): RuntimeError("corridor offline"),
+            },
+        )
+    ]
+
+    session = asyncio.run(build_session("USD", "CNY", "100", networks=networks))
+
+    assert {
+        (warning.from_currency, warning.reason, warning.code, warning.params)
+        for warning in session.warnings
+    } == {
+        (
+            "CNY",
+            "provider returned HTTP 503",
+            "provider_http_error",
+            (("status", "503"), ("detail", "maintenance")),
+        ),
+        ("USD", "not found", None, ()),
+        ("EUR", "corridor offline", None, ()),
+    }
+
+
 def test_build_session_routes_hkd_to_cny_over_cips() -> None:
     session = asyncio.run(build_session("HKD", "CNY", "10000", networks=[CIPSNetwork()]))
 

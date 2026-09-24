@@ -61,6 +61,15 @@ class Rail(PaymentNetwork):
         )
 
 
+class Unreachable(RuntimeError):
+    """A provider failure that identifies itself, as the live providers' do."""
+
+    def __init__(self) -> None:
+        super().__init__("quote request failed")
+        self.code = "provider_unreachable"
+        self.params: dict[str, str] = {}
+
+
 class Offline(PaymentNetwork):
     """Fails every corridor, as an unreachable live provider does."""
 
@@ -70,7 +79,7 @@ class Offline(PaymentNetwork):
         return CURRENCIES
 
     def get_quote(self, amount, source, target):
-        raise RuntimeError("quote request failed")
+        raise Unreachable()
 
 
 def _networks() -> list[PaymentNetwork]:
@@ -210,6 +219,11 @@ def test_provider_failures_are_grouped_per_network_and_reason(page: Page, consol
     assert "Offline" in items.first.inner_text()
     assert "quote request failed" in items.first.inner_text()
     assert "corridors" in items.first.locator("summary").inner_text()
+
+    # The failure's code translates its reason; the network keeps its name.
+    page.click("#lang-toggle")
+    page.wait_for_function("document.documentElement.lang === 'zh-CN'")
+    assert "Offline — 无法连接报价服务" in items.first.inner_text()
 
 
 def test_breakeven_uses_the_selected_profile_and_follows_the_entered_amount(

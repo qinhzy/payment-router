@@ -24,6 +24,7 @@ from payment_router.core.models import DataSource, Route
 from payment_router.decision import DecisionProfile
 from payment_router.service import (
     BuildWarning,
+    RoutingRequestError,
     build_session,
     merge_warnings,
     select_route_for_profile,
@@ -150,7 +151,12 @@ async def analyze(
     if min_amount <= 0 or max_amount <= 0:
         raise ValueError("amounts must be greater than zero")
     if min_amount >= max_amount:
-        raise ValueError("min_amount must be below max_amount")
+        raise RoutingRequestError(
+            "min_amount must be below max_amount",
+            code="range_order",
+            min=min_amount,
+            max=max_amount,
+        )
     if samples < 2:
         raise ValueError("samples must be at least 2")
     if refine_steps < 0:

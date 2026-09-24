@@ -124,8 +124,10 @@ class ApiError(HTTPException):
         self.params = params or {}
 
 
-def _request_error(error: service.RoutingRequestError) -> ApiError:
-    return ApiError(400, str(error), code=error.code, params=error.params)
+def _request_error(error: ValueError) -> ApiError:
+    """A rejected request, with its code when the error declares one."""
+    code, params = service.error_code(error)
+    return ApiError(400, str(error), code=code, params=params)
 
 
 class ExplainRequest(BaseModel):
@@ -363,6 +365,8 @@ def create_app(
                 "stale": fx_status.stale,
                 "fallback": fx_status.fallback,
                 "detail": fx_status.detail,
+                "code": fx_status.code,
+                "params": dict(fx_status.params),
             },
         }
 
@@ -491,16 +495,14 @@ def create_app(
                 against_date=against,
                 profile=profile,
             )
-        except service.RoutingRequestError as error:
-            raise _request_error(error) from None
         except ValueError as error:
-            raise ApiError(400, str(error)) from None
+            raise _request_error(error) from None
         except fx.FxLiveUnavailableError as error:
             raise ApiError(
                 503,
                 f"Historical rates unavailable: {error}",
                 code="historical_unavailable",
-                params={"detail": str(error)},
+                params=fx.reason_params(error),
             ) from None
 
         if report.baseline.route is None or report.candidate.route is None:
@@ -530,10 +532,8 @@ def create_app(
                 samples=samples,
                 refine_steps=refine,
             )
-        except service.RoutingRequestError as error:
-            raise _request_error(error) from None
         except ValueError as error:
-            raise ApiError(400, str(error)) from None
+            raise _request_error(error) from None
 
         if not report.regions:
             raise ApiError(
@@ -572,10 +572,8 @@ def create_app(
 
         try:
             report = await asyncio.to_thread(run_analysis)
-        except service.RoutingRequestError as error:
-            raise _request_error(error) from None
         except ValueError as error:
-            raise ApiError(400, str(error)) from None
+            raise _request_error(error) from None
 
         if not report.winners:
             raise ApiError(

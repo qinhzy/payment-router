@@ -120,6 +120,7 @@ def warning_to_json(warning: BuildWarning) -> dict[str, object]:
         "pair": f"{warning.from_currency}->{warning.to_currency}",
         "reason": warning.reason,
         "code": warning.code,
+        "params": dict(warning.params),
     }
 
 
