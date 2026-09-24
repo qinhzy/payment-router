@@ -207,3 +207,35 @@ def test_compare_honours_the_requested_profile(fx_cache_dir, httpx_mock) -> None
 def test_compare_rejects_a_future_date(fx_cache_dir) -> None:
     with pytest.raises(ValueError, match="future"):
         _compare(_scenario_networks, on_date="2099-01-01", against_date="2024-06-03")
+
+
+def test_report_warnings_merge_both_sides_once() -> None:
+    from payment_router.comparison import ComparisonReport, ComparisonSide
+    from payment_router.service import BuildWarning
+
+    shared = BuildWarning("SWIFT", "USD", "CNY", "timeout")
+    baseline_only = BuildWarning("CIPS", "USD", "CNY", "unavailable")
+
+    def side(label: str, warnings: tuple[BuildWarning, ...]) -> ComparisonSide:
+        return ComparisonSide(
+            label=label,
+            mode="historical",
+            rate_date=label,
+            requested_date=label,
+            detail="",
+            route=None,
+            warnings=warnings,
+            mid_rate=None,
+        )
+
+    report = ComparisonReport(
+        source_currency="USD",
+        target_currency="CNY",
+        amount=Decimal("1000"),
+        profile=DecisionProfile.BALANCED,
+        baseline=side("2024-06-03", (shared, baseline_only)),
+        candidate=side("2024-01-02", (shared,)),
+        caveats=(),
+    )
+
+    assert report.warnings == (shared, baseline_only)

@@ -55,6 +55,7 @@ dev = [
     "pytest>=8,<9",
     "pytest-httpx>=0.30,<1.0",
     "ruff>=0.6,<1.0",
+    "playwright>=1.56,<2",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -63,6 +64,9 @@ packages = ["src/payment_router"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = ["--strict-config", "--strict-markers"]
+markers = [
+    "e2e: drives the web console in Chromium (needs `uv run playwright install chromium`)",
+]
 
 [tool.ruff]
 line-length = 100

@@ -148,13 +148,38 @@ graph — with a live provider, its own quote round. The search therefore scans
 coarsely on a geometric scale (fee structure is scale-driven, so equal ratios
 are the meaningful step) and then bisects only across the boundaries where the
 winner actually changed. Precision comes from bisection rather than from
-sampling density, so locating a crossing costs roughly `samples + boundaries *
+sampling density, so the scan costs at most `samples + changed_intervals *
 refine_steps` builds instead of one per unit of precision.
 
 A crossing is never observed exactly, only bracketed. The report carries the
 bracket alongside the figure and says so, and it flags when the fees producing
 a crossing are scenario assumptions — in that case the boundary is a property
 of the model, not a measured market fact.
+
+Bisection can meet a third winner: a midpoint won by neither side of the
+bracket proves the interval holds at least two changes. Both halves are then
+located separately, so each change is reported, and every midpoint observed
+on the way joins the samples a region is represented by. Otherwise the second
+change would be dropped and the third route's amounts labelled with the route
+that won at the next coarse sample. The halves share the steps that remain —
+the lower one may use half, the upper one gets the rest — rather than each
+receiving all of them: quotes that wobble around a tie can crown a new winner
+at every midpoint, and full budgets would double the builds with every step.
+One sampled interval therefore never costs more than `refine_steps` builds;
+a second change inside it is located less finely, which its wider bracket
+states.
+
+Regions are built only across runs of consecutive samples that routed. A
+sample with no route — below a fee floor, or where every provider failed —
+interrupts coverage: no region extends across it, the outer regions start and
+end at the first and last routable samples rather than at the requested
+bounds, and two runs are never merged even when the same route wins both. A
+lone routable sample becomes a single-amount region rather than disappearing.
+
+Every build's provider failures are kept, reported once each, in the report's
+`warnings`; the regime map and the rate-date comparison do the same. A
+provider that failed changes which route can win, so an analysis never drops
+that disclosure just because it performed many builds.
 
 ## Two-dimensional regime analysis
 
@@ -246,6 +271,35 @@ always agree on routing behavior and error messages.
   successful builds are cached, responses expose `quoted_at`/`from_cache`
   metadata, and a TTL of zero disables the cache. The CLI always builds fresh.
 
+- The console's text lives in `web/static/i18n/en.json` and `zh-CN.json`.
+  Statements the backend makes are not translated by parsing prose: each
+  caveat is an `analysis.Caveat`, a `str` that also carries a stable code and
+  its parameters, and the JSON returns `caveat_codes` index-aligned with the
+  English `caveats`. Errors carry `code` and `params` beside the English
+  `detail`, and so do provider failures (`WiseAPIError`, the graph's
+  `QuoteTimeoutError`), live-rate failures (`FxLiveUnavailableError`), rate
+  dates (`FxDateError`), build warnings, and the FX status in `/api/meta`.
+  `service.error_code` reads a code only when an exception declares a string
+  code with a mapping of parameters, so an unrelated `code` attribute (an
+  HTTP status) is never mistaken for one. A statement that quotes a failure
+  ("live rates are unavailable (…)") carries it flattened as `reason`,
+  `reason_code`, and `reason_*` parameters, and the console translates both.
+  Text quoted from a provider or HTTP client stays verbatim. The console
+  renders a statement from its code when a translation with every parameter
+  exists and otherwise shows the backend's sentence, so a translation can
+  neither drift from which statement applies nor quote a different figure.
+  Tests keep both catalogs' keys and placeholders in step, require a Chinese
+  template for every code the backend assigns, and drive each failure and
+  FX status through its real code path to check the parameters it sends.
+  Provenance registry entries are the project's own summaries of its
+  evidence: `zh-CN.json` translates them by evidence id and field, the
+  English entry stays authoritative (the console shows it on hover), and a
+  test requires every figure of the English entry, and no other, in each
+  translation.
+- `/api/meta` offers amount presets per currency: a USD ladder converted at
+  the active mid-rate and snapped to 1, 2, 2.5 or 5 times a power of ten.
+  They are input conveniences and are never presented as quotes; the
+  console shortens them to 2K or 1万 only when the row cannot fit them.
 - `web/ai.py` is the optional AI layer: when Anthropic credentials resolve,
   `POST /api/explain` streams a Claude-generated reading of the displayed
   result over server-sent events. The prompt grounds the model strictly in

@@ -96,8 +96,14 @@ def format_amount(amount: Decimal) -> str:
 
 
 def format_hours(hours: Decimal) -> str:
-    """Render hours trimmed to at most three decimals, always with a decimal point."""
-    normalized = format(hours.quantize(Decimal("0.001")).normalize(), "f")
+    """Render hours trimmed to at most three decimals, always with a decimal point.
+
+    Below one hour the precision extends to six decimals: a ten-second
+    transfer is 0.002778 h, where three decimals (0.003 h) would read as
+    eleven seconds to anything that converts the figure back.
+    """
+    step = Decimal("0.001") if abs(hours) >= 1 else Decimal("0.000001")
+    normalized = format(hours.quantize(step).normalize(), "f")
     if "." not in normalized:
         return f"{normalized}.0"
 
