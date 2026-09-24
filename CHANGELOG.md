@@ -115,6 +115,10 @@ All notable user-visible changes are recorded here. The project follows
   their own tile;
 - the scenario summary echoed an amount the form rejects; it shows a dash
   until the amount is valid;
+- a cached routing session could outlive a live FX refresh by up to its
+  60-second lifetime, or mix rates from two snapshots when a refresh landed
+  while providers were quoting. The web cache is keyed by the active FX
+  generation, and a session built across a refresh is rebuilt (#19);
 - the sensitivity strip left its last sampling step empty: regions list the
   sampled weights they won, one step apart, and were drawn at exactly that
   width, so a 0–1 axis ended short of its right edge. Each boundary is now
@@ -181,7 +185,11 @@ All notable user-visible changes are recorded here. The project follows
 - the CLI groups provider warnings by network and reason, like the console:
   an unreachable provider is one row with a count and a sample of corridors
   instead of one row per corridor;
-- AI explanations answer in the console's language rather than the browser's.
+- AI explanations answer in the console's language rather than the browser's;
+- the `web` extra accepts anthropic 1.x (`>=0.100,<2.0`) and the development
+  group pytest 9 (`<10`); the lockfile moves to anthropic 1.8.0, pytest 9.1.1
+  and pytest-httpx 0.36.2. The console's AI streaming uses no call that
+  anthropic 1.0 removed or renamed, so it needs no change.
 
 ## [0.8.0] - Unreleased
 
