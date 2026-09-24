@@ -31,13 +31,15 @@ from payment_router.analysis import caveat_templates
 from payment_router.core import fx
 from payment_router.core.graph import QuoteTimeoutError
 from payment_router.networks.wise import WiseAPIError, WiseNetwork
+from payment_router.provenance import PROVENANCE_RECORDS
 from payment_router.web.app import DISCLAIMER, STATIC_DIR, create_app
 
 CATALOG_DIR = STATIC_DIR / "i18n"
 # Backend statements are rendered from their code only when translating;
 # English shows the backend's own sentence, so these live in zh-CN alone.
-TRANSLATION_ONLY = ("caveat.", "error.", "warning.", "reason.", "fxstatus.")
+TRANSLATION_ONLY = ("caveat.", "error.", "warning.", "reason.", "fxstatus.", "evidence.")
 PLACEHOLDER = re.compile(r"\{(\w+)\}")
+FIGURE = re.compile(r"\d+(?:\.\d+)?")
 CODE_ASSIGNMENT = re.compile(r'\bcode\s*=\s*"([a-z_]+)"')
 CODED_MODULES = (
     payment_router.service,
@@ -376,6 +378,28 @@ def test_every_interface_key_is_used() -> None:
         and f'"{key.removesuffix(".one").removesuffix(".other")}"' not in javascript
     ]
     assert unused == []
+
+
+def test_every_registry_entry_is_translated_with_the_same_figures() -> None:
+    chinese = _catalog("zh-CN")
+    records = {record.evidence_id: record for record in PROVENANCE_RECORDS}
+    translated = {key for key in chinese if key.startswith("evidence.")}
+
+    # No translation outlives its entry, and only these fields translate.
+    assert {key.split(".")[1] for key in translated} == set(records)
+    assert {key.split(".")[2] for key in translated} <= {"network", "metric", "value", "caveat"}
+    for evidence_id, record in records.items():
+        for field in ("metric", "value", "caveat"):
+            english = getattr(record, field)
+            text = chinese[f"evidence.{evidence_id}.{field}"]
+            # The English entry is authoritative: a translation restates
+            # every figure it gives, and no other.
+            assert sorted(FIGURE.findall(text)) == sorted(FIGURE.findall(english)), (
+                evidence_id,
+                field,
+            )
+        network = chinese.get(f"evidence.{evidence_id}.network")
+        assert network is None or FIGURE.findall(network) == FIGURE.findall(record.network)
 
 
 def test_english_disclaimer_is_the_one_the_api_publishes() -> None:

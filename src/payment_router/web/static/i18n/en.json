@@ -149,6 +149,7 @@
   "registry.title": "Data provenance registry",
   "registry.hint": "Every fee, time, and FX component carries its own evidence class",
   "registry.originalNote": "",
+  "registry.metricValue": "{metric}: {value}",
   "registry.evidence": "Evidence",
   "registry.network": "Network",
   "registry.metric": "Metric & value",

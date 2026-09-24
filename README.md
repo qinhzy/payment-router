@@ -65,7 +65,8 @@ the same routing engine the CLI uses:
   browser language, can be switched from the top bar, and redraws the results
   on screen without asking the server again. Analysis caveats and error
   messages are translated from stable codes the API sends beside the English
-  sentence; the provenance registry keeps its evidence in the original English;
+  sentence, and the provenance registry's entries from translations keyed by
+  evidence id, with the authoritative English entry shown on hover;
 - corridor form with amount (thousands separators accepted), round amount
   presets sized to the source currency (2,000 CNY rather than 250), currency
   swap, cheapest/fastest/balanced preference, and top-1/3/5 candidates;

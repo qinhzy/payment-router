@@ -2352,11 +2352,17 @@
 
   /* ---------- sources rendering ---------- */
 
+  // Registry entries are the project's own summaries of its evidence. The
+  // English entry is authoritative; a translation is keyed by evidence id
+  // and field, and an entry without one stays in English.
+  function registryText(record, field) {
+    if (lang === "en") return record[field];
+    return lookup(`evidence.${record.evidence_id}.${field}`) ?? record[field];
+  }
+
   function renderSources(records) {
     sourceRecords = records;
     const nodes = [];
-    // Entries quote their evidence, so they stay in the language of the
-    // cited sources; the surrounding interface is translated.
     const note = t("registry.originalNote");
     if (note) nodes.push(el("p", "registry-note", note));
     const wrap = el("div", "hop-table-wrap");
@@ -2378,11 +2384,24 @@
     records.forEach((record) => {
       const row = el("tr");
       row.append(el("td", "", record.evidence_id));
-      row.append(el("td", "", record.network));
+      const networkCell = el("td", "", registryText(record, "network"));
+      if (networkCell.textContent !== record.network) networkCell.title = record.network;
+      row.append(networkCell);
       const metricCell = el("td");
-      metricCell.lang = "en";
-      metricCell.append(document.createTextNode(`${record.metric}: ${record.value}`));
-      metricCell.append(el("span", "caveat", record.caveat));
+      const english = `${record.metric}: ${record.value}`;
+      const shown = t("registry.metricValue", {
+        metric: registryText(record, "metric"),
+        value: registryText(record, "value"),
+      });
+      const caveat = registryText(record, "caveat");
+      if (shown === english && caveat === record.caveat) {
+        metricCell.lang = "en";
+      } else {
+        // The authoritative English entry, one hover away.
+        metricCell.title = `${english}\n${record.caveat}`;
+      }
+      metricCell.append(document.createTextNode(shown));
+      metricCell.append(el("span", "caveat", caveat));
       row.append(metricCell);
       const classCell = el("td");
       classCell.append(provenanceBadge(record.classification));

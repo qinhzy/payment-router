@@ -285,6 +285,11 @@ always agree on routing behavior and error messages.
   Tests keep both catalogs' keys and placeholders in step, require a Chinese
   template for every code the backend assigns, and drive each failure and
   FX status through its real code path to check the parameters it sends.
+  Provenance registry entries are the project's own summaries of its
+  evidence: `zh-CN.json` translates them by evidence id and field, the
+  English entry stays authoritative (the console shows it on hover), and a
+  test requires every figure of the English entry, and no other, in each
+  translation.
 - `/api/meta` offers amount presets per currency: a USD ladder converted at
   the active mid-rate and snapped to 1, 2, 2.5 or 5 times a power of ten.
   They are input conveniences and are never presented as quotes; the

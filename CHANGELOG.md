@@ -41,8 +41,10 @@ All notable user-visible changes are recorded here. The project follows
   analysis JSON adds `caveat_codes` index-aligned with `caveats`, API errors add
   `code` and `params` beside the unchanged English `detail`, and warnings add a
   `code` for the simulator's own statements. When a translation lacks a figure
-  the server sent, the English sentence is shown instead. The provenance
-  registry keeps its evidence in the original English, which the console says;
+  the server sent, the English sentence is shown instead. Provenance registry
+  entries are translated by evidence id; the English entry stays
+  authoritative, is shown on hover, and every figure it gives must reappear
+  in the translation;
 - amount presets sized to the source currency: `/api/meta` returns
   `quick_amounts`, a USD ladder converted at the active mid-rate and snapped to
   a round figure, so a CNY sender is offered 2,000–50,000 rather than 250;

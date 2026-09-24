@@ -377,6 +377,11 @@ def test_the_interface_switches_to_chinese_in_place(page: Page, console_url: str
         "(badges) => badges.map((badge) => badge.getBoundingClientRect().height)"
     )
     assert heights and max(heights) < 26
+    # Registry entries read in Chinese, with the authoritative English entry
+    # one hover away.
+    entry = page.locator(".registry-table tr", has_text="sepa-instant-time").locator("td").nth(2)
+    assert entry.inner_text().startswith("最长执行时间：10 秒")
+    assert entry.get_attribute("title").startswith("maximum execution time: 10 seconds")
 
     page.reload()
     _settle(page)
@@ -385,6 +390,7 @@ def test_the_interface_switches_to_chinese_in_place(page: Page, console_url: str
     page.click("#lang-toggle")
     page.wait_for_function("document.documentElement.lang === 'en'")
     assert page.locator(".caveat-rows div").first.inner_text() == english_caveat
+    assert entry.inner_text().startswith("maximum execution time: 10 seconds")
 
 
 def test_a_chinese_browser_starts_in_chinese(browser: Browser, console_url: str) -> None:
