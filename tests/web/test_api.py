@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from fastapi.testclient import TestClient
 from helpers import FakeNetwork, make_quote
 
@@ -89,6 +91,30 @@ def test_console_assets_include_the_deep_linkable_regime_view() -> None:
     assert 'id="results-context"' in index
     assert "markResultsStale" in javascript
     assert ".results-context" in stylesheet
+
+
+def test_console_assets_carry_the_interaction_contract() -> None:
+    client = _client()
+
+    index = client.get("/").text
+    javascript = client.get("/app.js").text
+    stylesheet = client.get("/styles.css").text
+
+    # Component `display` rules must not override the attribute, or an empty
+    # recents bar and a blank disclaimer render before any data arrives.
+    assert re.search(r"\[hidden\]\s*\{\s*display:\s*none\s*!important;", stylesheet)
+    # Break-even and rate-date comparisons honour the selected profile.
+    for kind in ("breakeven", "compare"):
+        assert re.search(
+            rf'kind === "{kind}"\) \{{\s*return \{{[^}}]*profile: request\.profile',
+            javascript,
+        ), kind
+    # Every view discloses provider failures, grouped per network and reason.
+    assert "showWarnings(data.warnings)" in javascript
+    assert "function groupWarnings" in javascript
+    # Scan range and inline errors live in the form, next to their inputs.
+    for element_id in ("range-min", "range-max", "range-error", "date-error"):
+        assert f'id="{element_id}"' in index
 
 
 def test_route_returns_single_route_with_amounts_and_mermaid() -> None:
@@ -525,6 +551,8 @@ def test_compare_returns_both_sides_and_deltas(monkeypatch, tmp_path, httpx_mock
         assert float(payload["deltas"]["receive"]) < 0
         assert payload["deltas"]["route_changed"] is False
         assert any("Only the FX table differs" in caveat for caveat in payload["caveats"])
+        # Top-level warnings merge both sides so the console can show them once.
+        assert payload["warnings"] == []
     finally:
         fx_module.activate("frozen")
 
@@ -809,3 +837,52 @@ def test_regime_rejects_an_inverted_range() -> None:
     )
 
     assert response.status_code == 400
+
+
+def _networks_with_a_failing_provider() -> list[PaymentNetwork]:
+    return [
+        *_stub_networks(),
+        FakeNetwork(
+            "Flaky",
+            {"USD", "CNY"},
+            {("USD", "CNY"): RuntimeError("quote request failed")},
+        ),
+    ]
+
+
+def test_breakeven_discloses_provider_failures_once() -> None:
+    response = _client(_networks_with_a_failing_provider).get(
+        "/api/breakeven",
+        params={"source": "USD", "target": "CNY", "samples": 4, "refine": 1},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["builds"] > 1
+    assert payload["warnings"] == [
+        {"network": "Flaky", "pair": "USD->CNY", "reason": "quote request failed"}
+    ]
+
+
+def test_breakeven_applies_the_requested_profile() -> None:
+    response = _client().get(
+        "/api/breakeven",
+        params={"source": "USD", "target": "CNY", "samples": 3, "refine": 0, "profile": "fastest"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["request"]["profile"] == "fastest"
+
+
+def test_regime_discloses_provider_failures_once() -> None:
+    response = _client(_networks_with_a_failing_provider).get(
+        "/api/regime",
+        params={"source": "USD", "target": "CNY", "amount_samples": 3, "weight_steps": 10},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["builds"] == 3
+    assert payload["warnings"] == [
+        {"network": "Flaky", "pair": "USD->CNY", "reason": "quote request failed"}
+    ]

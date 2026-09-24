@@ -17,6 +17,11 @@
   const compareButton = $("#compare-button");
   const breakevenButton = $("#breakeven-button");
   const onDateInput = $("#on-date");
+  const dateError = $("#date-error");
+  const rangeMinInput = $("#range-min");
+  const rangeMaxInput = $("#range-max");
+  const rangeError = $("#range-error");
+  const rangeCurrency = $("#range-currency");
   const alertsBox = $("#alerts");
   const warningsBox = $("#warnings");
   const resultsBox = $("#results");
@@ -28,6 +33,38 @@
   const scenarioSummary = $("#scenario-summary");
   const quickAmountButtons = [...document.querySelectorAll("[data-quick-amount]")];
   const requestControls = [...form.querySelectorAll("input, select, button")];
+  const actionButtons = [
+    routeButton,
+    decideButton,
+    sensitivityButton,
+    regimeButton,
+    compareButton,
+    breakevenButton,
+  ];
+
+  const TITLE_BASE = document.title;
+  const DEFAULT_SCAN = { min: "10", max: "100000" };
+  const PROFILES = ["cheapest", "fastest", "balanced"];
+  // Cost weight of each profile, matching service.preference_for_profile.
+  const PROFILE_COST_WEIGHTS = { cheapest: 1, fastest: 0, balanced: 0.5 };
+  const VIEW_KINDS = ["route", "decide", "sensitivity", "compare", "breakeven", "regime"];
+  const RANGE_KINDS = ["breakeven", "regime"];
+  const VIEW_LABELS = {
+    route: "Route search",
+    decide: "Profile comparison",
+    sensitivity: "Sensitivity analysis",
+    compare: "Rate-date comparison",
+    breakeven: "Break-even scan",
+    regime: "Regime map",
+  };
+  const ENDPOINTS = {
+    route: "/api/route",
+    decide: "/api/decide",
+    sensitivity: "/api/sensitivity",
+    compare: "/api/compare",
+    breakeven: "/api/breakeven",
+    regime: "/api/regime",
+  };
 
   const CURRENCY_SYMBOLS = {
     USD: "$",
@@ -65,6 +102,12 @@
   let aiMeta = null;
   let resultsAnnouncementFrame = null;
   let lastSuccessfulRun = null;
+  // Aborts work owned by the results on screen (an AI stream) once they are
+  // replaced. It is separate from the request run, which ends on render.
+  let viewController = null;
+  // Set by the amount-axis views so the "your scenario" marker can follow
+  // the form without re-running the scan: the marker is purely client-side.
+  let scenarioMarkerUpdater = null;
 
   const networkSlots = new Map();
 
@@ -96,6 +139,18 @@
     });
   }
 
+  function fmtAmountLabel(value) {
+    const parsed = Number.parseFloat(value);
+    if (!Number.isFinite(parsed)) return String(value);
+    return parsed.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  }
+
+  function fmtCompact(value) {
+    const parsed = Number.parseFloat(value);
+    if (!Number.isFinite(parsed)) return String(value);
+    return parsed.toLocaleString("en-US", { notation: "compact", maximumFractionDigits: 1 });
+  }
+
   function fmtMoney(value, code) {
     return `${currencySymbol(code)}${fmtNumber(value)}`;
   }
@@ -121,6 +176,46 @@
     if (hours < 10) return `${Math.round(hours * 10) / 10} h`;
     if (hours < 72) return `${Math.round(hours)} h`;
     return `${Math.round((hours / 24) * 10) / 10} d`;
+  }
+
+  // People type grouping separators ("1,000", "10 000"); the API wants a
+  // plain decimal. A separator is only accepted between groups of exactly
+  // three digits, so an ambiguous "1,5" (a decimal comma?) is rejected by
+  // validation instead of being silently read as fifteen.
+  const GROUPED_AMOUNT = /^[+]?\d{1,3}([,\s'_])\d{3}(?:\1\d{3})*(?:\.\d*)?$/;
+  const DECIMAL_AMOUNT = /^[+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
+
+  function normalizeAmount(raw) {
+    const text = String(raw ?? "").trim();
+    return GROUPED_AMOUNT.test(text) ? text.replace(/[,\s'_]/g, "") : text;
+  }
+
+  function parsePositiveAmount(raw) {
+    const text = normalizeAmount(raw);
+    const value = Number(text);
+    if (!DECIMAL_AMOUNT.test(text) || !Number.isFinite(value) || value <= 0) return null;
+    return { text, value };
+  }
+
+  function canonicalAmount(raw) {
+    const parsed = parsePositiveAmount(raw);
+    return parsed ? String(parsed.value) : String(raw ?? "");
+  }
+
+  function prefersReducedMotion() {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
+
+  function slotColor(index) {
+    return index < 8 ? `var(--series-${index + 1})` : "var(--series-other)";
+  }
+
+  function routeKey(route) {
+    return `${route.path.join(">")}|${route.hops.map((hop) => hop.network).join(">")}`;
+  }
+
+  function routeNetworks(route) {
+    return [...new Set(route.hops.map((hop) => hop.network))].join(", ");
   }
 
   function networkSlot(name) {
@@ -210,27 +305,58 @@
     alertsBox.hidden = false;
   }
 
-  function warningList(warnings) {
-    const list = el("ul");
+  function formatPair(pair) {
+    return pair === "*->*" ? "all corridors" : String(pair).replace("->", " → ");
+  }
+
+  // A provider that is down fails every corridor with the same reason; one
+  // line per network and reason keeps thirty identical rows from burying
+  // the one failure that differs.
+  function groupWarnings(warnings) {
+    const groups = new Map();
     warnings.forEach((warning) => {
-      list.append(el("li", "", `${warning.network} ${warning.pair}: ${warning.reason}`));
+      const key = `${warning.network}\u0000${warning.reason}`;
+      if (!groups.has(key)) {
+        groups.set(key, { network: warning.network, reason: warning.reason, pairs: [] });
+      }
+      groups.get(key).pairs.push(formatPair(warning.pair));
     });
-    return list;
+    return [...groups.values()];
+  }
+
+  function warningItem(group) {
+    const item = el("li");
+    item.append(el("strong", "", group.network), document.createTextNode(` — ${group.reason}`));
+    if (group.pairs.length === 1) {
+      item.append(el("span", "warning-pairs-inline", ` (${group.pairs[0]})`));
+    } else {
+      const details = el("details", "warning-pairs");
+      details.append(el("summary", "", `${group.pairs.length} corridors`));
+      details.append(el("p", "", group.pairs.join(", ")));
+      item.append(details);
+    }
+    return item;
   }
 
   function showWarnings(warnings) {
     if (!warnings || warnings.length === 0) return;
+    const groups = groupWarnings(warnings);
     const alert = el("div", "alert alert-warning");
     alert.setAttribute("role", "status");
     const body = el("div");
     body.append(el("strong", "", "Some providers could not quote every corridor"));
-    const visibleCount = 5;
-    body.append(warningList(warnings.slice(0, visibleCount)));
-    if (warnings.length > visibleCount) {
-      const rest = warnings.slice(visibleCount);
+    body.append(el("p", "alert-note", "The results below were computed without those quotes."));
+    const visibleCount = 4;
+    const list = el("ul");
+    groups.slice(0, visibleCount).forEach((group) => list.append(warningItem(group)));
+    body.append(list);
+    if (groups.length > visibleCount) {
+      const rest = groups.slice(visibleCount);
       const details = el("details");
       details.append(el("summary", "", `Show ${rest.length} more`));
-      details.append(warningList(rest));
+      const restList = el("ul");
+      rest.forEach((group) => restList.append(warningItem(group)));
+      details.append(restList);
       body.append(details);
     }
     alert.append(svg(ICONS.warning), body);
@@ -238,8 +364,26 @@
     warningsBox.hidden = false;
   }
 
-  function showSkeleton() {
+  function showSkeleton(kind) {
     const card = el("div", "skeleton");
+    const head = el("div", "skeleton-head");
+    const label = el("span", "skeleton-label");
+    label.append(svg('<span class="spinner"></span>'), document.createTextNode(`${VIEW_LABELS[kind]} running…`));
+    const cancel = el("button", "button button-ghost button-small", "Cancel");
+    cancel.type = "button";
+    cancel.title = "Stop this request (Esc)";
+    cancel.addEventListener("click", cancelActiveRun);
+    head.append(label, cancel);
+    card.append(head);
+    if (RANGE_KINDS.includes(kind)) {
+      card.append(
+        el(
+          "p",
+          "skeleton-note",
+          "Every sampled amount needs its own quote round, so a scan takes longer than a single route."
+        )
+      );
+    }
     ["60%", "38%", "82%", "70%"].forEach((width) => {
       const line = el("div", "shimmer");
       line.style.width = width;
@@ -289,29 +433,44 @@
     return routeButton;
   }
 
+  function restoreButtonLabels() {
+    actionButtons.forEach((button) => {
+      if (button.dataset.label) {
+        button.textContent = button.dataset.label;
+        delete button.dataset.label;
+      }
+    });
+  }
+
+  // Disabling the focused control drops focus to <body>; remembering it lets
+  // a keyboard user continue from the same place once the request settles.
+  let focusBeforeBusy = null;
+
+  function restoreFocus(fallback) {
+    const previous = focusBeforeBusy;
+    focusBeforeBusy = null;
+    const active = document.activeElement;
+    if (active && active !== document.body) return; // the user already moved on
+    const usable = (node) =>
+      node && node.isConnected && !node.disabled && !node.closest("[hidden]");
+    const target = usable(previous) ? previous : fallback;
+    if (usable(target)) target.focus({ preventScroll: true });
+  }
+
   function setBusy(busy, activeButton) {
+    if (busy && focusBeforeBusy === null) focusBeforeBusy = document.activeElement;
     requestControls.forEach((control) => {
       control.disabled = busy;
     });
     form.setAttribute("aria-busy", String(busy));
     resultsBox.setAttribute("aria-busy", String(busy));
+    // A superseding run may use a different button; only one spinner shows.
+    restoreButtonLabels();
     if (busy) {
-      activeButton.dataset.label = activeButton.textContent;
+      activeButton.dataset.label = activeButton.textContent.trim();
       activeButton.replaceChildren(svg('<span class="spinner"></span>'), document.createTextNode(" Working…"));
     } else {
-      [
-        routeButton,
-        decideButton,
-        sensitivityButton,
-        regimeButton,
-        compareButton,
-        breakevenButton,
-      ].forEach((button) => {
-        if (button.dataset.label) {
-          button.textContent = button.dataset.label;
-          delete button.dataset.label;
-        }
-      });
+      restoreFocus(activeButton);
     }
   }
 
@@ -320,16 +479,43 @@
   async function errorDetail(response) {
     try {
       const payload = await response.json();
-      if (payload && typeof payload.detail === "string") return payload.detail;
+      const detail = payload ? payload.detail : undefined;
+      if (typeof detail === "string") return detail;
+      // FastAPI validation errors arrive as a list of {loc, msg}.
+      if (Array.isArray(detail) && detail.length > 0) {
+        return detail
+          .map((issue) => {
+            const field = Array.isArray(issue.loc)
+              ? issue.loc.filter((part) => part !== "query" && part !== "body").join(".")
+              : "";
+            return field ? `${field}: ${issue.msg}` : String(issue.msg);
+          })
+          .join("; ");
+      }
     } catch {
       /* non-JSON error body */
+    }
+    if (response.status >= 500) {
+      return `The simulator server failed (HTTP ${response.status}). Check the terminal running remit serve.`;
     }
     return `Request failed with status ${response.status}.`;
   }
 
+  const UNREACHABLE_MESSAGE =
+    "Cannot reach the local simulator server. Check that remit serve is still running, then try again.";
+
+  async function send(path, init) {
+    try {
+      return await fetch(path, init);
+    } catch (error) {
+      if (isAbort(error)) throw error;
+      throw new Error(UNREACHABLE_MESSAGE);
+    }
+  }
+
   async function apiGet(path, params, signal) {
     const query = new URLSearchParams(params);
-    const response = await fetch(`${path}?${query}`, {
+    const response = await send(`${path}?${query}`, {
       headers: { Accept: "application/json" },
       signal,
     });
@@ -351,6 +537,12 @@
     return activeRun;
   }
 
+  function cancelActiveRun() {
+    if (!activeRun) return;
+    activeRun.cancelledByUser = true;
+    activeRun.abort();
+  }
+
   function isAbort(error) {
     return error instanceof DOMException && error.name === "AbortError";
   }
@@ -359,17 +551,19 @@
     return {
       source: sourceSelect.value,
       target: targetSelect.value,
-      amount: amountInput.value.trim(),
-      profile: form.elements.profile.value,
-      top_n: form.elements.top_n.value,
+      amount: normalizeAmount(amountInput.value),
+      profile: form.elements.profile.value || "balanced",
+      top_n: form.elements.top_n.value || "1",
       on_date: onDateInput.value,
+      min_amount: normalizeAmount(rangeMinInput.value),
+      max_amount: normalizeAmount(rangeMaxInput.value),
     };
   }
 
   function updateScenarioSummary() {
-    const amount = Number(amountInput.value.trim());
-    const amountLabel = Number.isFinite(amount) && amount > 0
-      ? amount.toLocaleString("en-US", { maximumFractionDigits: 2 })
+    const parsed = parsePositiveAmount(amountInput.value);
+    const amountLabel = parsed
+      ? parsed.value.toLocaleString("en-US", { maximumFractionDigits: 2 })
       : amountInput.value.trim() || "—";
     const profile = PROFILE_LABELS[form.elements.profile.value] || "Balanced";
     const candidateCount = form.elements.top_n.value;
@@ -377,44 +571,103 @@
     scenarioSummary.textContent =
       `${amountLabel} ${sourceSelect.value || "—"} → ${targetSelect.value || "—"}` +
       ` · ${profile} · ${candidates}`;
+    rangeCurrency.textContent = sourceSelect.value || "";
 
     quickAmountButtons.forEach((button) => {
-      const active =
-        Number.isFinite(amount) && amount === Number(button.dataset.quickAmount);
+      const active = parsed !== null && parsed.value === Number(button.dataset.quickAmount);
       button.classList.toggle("is-active", active);
       button.setAttribute("aria-pressed", String(active));
     });
+
+    if (scenarioMarkerUpdater) scenarioMarkerUpdater(currentRequest());
   }
 
-  function clearAmountError() {
-    amountInput.removeAttribute("aria-invalid");
-    amountError.textContent = "";
-    amountError.hidden = true;
+  /* ---------- validation ---------- */
+
+  function setFieldError(input, errorNode, message) {
+    if (message) {
+      input.setAttribute("aria-invalid", "true");
+      errorNode.textContent = message;
+      errorNode.hidden = false;
+    } else {
+      input.removeAttribute("aria-invalid");
+      errorNode.textContent = "";
+      errorNode.hidden = true;
+    }
   }
 
-  function validateRequest(kind) {
-    if (kind === "regime" || kind === "breakeven") {
-      clearAmountError();
-      return true;
-    }
+  function clearRangeError() {
+    rangeMinInput.removeAttribute("aria-invalid");
+    setFieldError(rangeMaxInput, rangeError, "");
+  }
 
-    const rawAmount = amountInput.value.trim();
-    const decimalPattern = /^[+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
-    const amount = Number(rawAmount);
-    if (decimalPattern.test(rawAmount) && Number.isFinite(amount) && amount > 0) {
-      clearAmountError();
-      return true;
-    }
+  function clearFieldErrors() {
+    setFieldError(amountInput, amountError, "");
+    setFieldError(onDateInput, dateError, "");
+    clearRangeError();
+  }
 
-    amountInput.setAttribute("aria-invalid", "true");
-    amountError.textContent = "Enter a finite amount greater than zero.";
-    amountError.hidden = false;
+  function validateAmount() {
+    if (parsePositiveAmount(amountInput.value)) return true;
+    setFieldError(
+      amountInput,
+      amountError,
+      "Enter an amount greater than zero, such as 1000 or 1,000.50."
+    );
     amountInput.focus();
     return false;
   }
 
-  amountInput.addEventListener("input", () => {
-    clearAmountError();
+  function validateRange() {
+    const low = parsePositiveAmount(rangeMinInput.value);
+    const high = parsePositiveAmount(rangeMaxInput.value);
+    let culprit = null;
+    let message = "";
+    if (!low) {
+      culprit = rangeMinInput;
+      message = "Enter a smallest scan amount greater than zero.";
+    } else if (!high) {
+      culprit = rangeMaxInput;
+      message = "Enter a largest scan amount greater than zero.";
+    } else if (low.value >= high.value) {
+      culprit = rangeMaxInput;
+      message = "The scan range must end above where it starts.";
+    }
+    if (!culprit) return true;
+    culprit.setAttribute("aria-invalid", "true");
+    rangeError.textContent = message;
+    rangeError.hidden = false;
+    culprit.focus();
+    return false;
+  }
+
+  function validateDate() {
+    const value = onDateInput.value;
+    let message = "";
+    if (!value) {
+      message = "Pick a past rate date to compare with the latest ECB fixing.";
+    } else if (onDateInput.min && value < onDateInput.min) {
+      message = `ECB reference rates start on ${onDateInput.min}.`;
+    } else if (onDateInput.max && value > onDateInput.max) {
+      message = "Pick a date that is not in the future.";
+    }
+    if (!message) return true;
+    setFieldError(onDateInput, dateError, message);
+    onDateInput.focus();
+    return false;
+  }
+
+  function validateRequest(kind) {
+    clearFieldErrors();
+    if (RANGE_KINDS.includes(kind)) return validateRange();
+    if (!validateAmount()) return false;
+    return kind === "compare" ? validateDate() : true;
+  }
+
+  form.addEventListener("input", (event) => {
+    if (event.target === amountInput) setFieldError(amountInput, amountError, "");
+    if (event.target === rangeMinInput || event.target === rangeMaxInput) clearRangeError();
+    if (event.target === onDateInput) setFieldError(onDateInput, dateError, "");
     updateScenarioSummary();
     markResultsStale();
   });
@@ -425,7 +678,7 @@
   quickAmountButtons.forEach((button) => {
     button.addEventListener("click", () => {
       amountInput.value = button.dataset.quickAmount;
-      clearAmountError();
+      setFieldError(amountInput, amountError, "");
       updateScenarioSummary();
       markResultsStale();
     });
@@ -439,28 +692,33 @@
       to: request.target,
       amount: request.amount,
     });
-    if (kind === "compare") {
-      params.set("view", kind);
-      params.set("on", request.on_date);
-    } else if (
-      kind === "breakeven" ||
-      kind === "decide" ||
-      kind === "sensitivity" ||
-      kind === "regime"
-    ) {
-      params.set("view", kind);
-    } else {
+    if (kind === "route") {
       params.set("profile", request.profile);
       params.set("top_n", request.top_n);
+      return params;
+    }
+    params.set("view", kind);
+    if (kind === "compare") params.set("on", request.on_date);
+    if (kind === "compare" || kind === "breakeven") params.set("profile", request.profile);
+    if (RANGE_KINDS.includes(kind)) {
+      params.set("min", request.min_amount);
+      params.set("max", request.max_amount);
     }
     return params;
   }
 
+  // Exactly the inputs a view's result depends on; changing anything else
+  // must not flag the result as stale or split the recent-search history.
   function resultSignature(kind, request) {
     const fields = [kind, request.source, request.target];
-    if (!["regime", "breakeven"].includes(kind)) fields.push(request.amount);
-    if (kind === "route") fields.push(request.profile, request.top_n);
-    if (kind === "compare") fields.push(request.on_date);
+    if (RANGE_KINDS.includes(kind)) {
+      fields.push(canonicalAmount(request.min_amount), canonicalAmount(request.max_amount));
+    } else {
+      fields.push(canonicalAmount(request.amount));
+    }
+    if (kind === "route") fields.push(request.profile, String(request.top_n));
+    if (kind === "compare") fields.push(request.on_date, request.profile);
+    if (kind === "breakeven") fields.push(request.profile);
     return JSON.stringify(fields);
   }
 
@@ -488,9 +746,9 @@
     const params = new URLSearchParams(window.location.search);
     const source = params.get("from");
     const target = params.get("to");
-    const amount = params.get("amount");
-    if (!source || !target || !amount) return null;
+    if (!source || !target) return null;
     const view = params.get("view");
+    const profile = params.get("profile");
     return {
       kind: ["decide", "sensitivity", "compare", "breakeven", "regime"].includes(view)
         ? view
@@ -498,15 +756,19 @@
       on_date: params.get("on") || "",
       source: source.toUpperCase(),
       target: target.toUpperCase(),
-      amount,
-      profile: params.get("profile") || "balanced",
+      amount: params.get("amount") || normalizeAmount(amountInput.value),
+      profile: PROFILES.includes(profile) ? profile : "balanced",
       top_n: params.get("top_n") || "1",
+      min_amount: params.get("min") || DEFAULT_SCAN.min,
+      max_amount: params.get("max") || DEFAULT_SCAN.max,
     };
   }
 
   function applyRequestToForm(request) {
     amountInput.value = request.amount;
     if (request.on_date) onDateInput.value = request.on_date;
+    rangeMinInput.value = request.min_amount || DEFAULT_SCAN.min;
+    rangeMaxInput.value = request.max_amount || DEFAULT_SCAN.max;
     const hasOption = (select, value) =>
       [...select.options].some((option) => option.value === value);
     if (hasOption(sourceSelect, request.source)) sourceSelect.value = request.source;
@@ -519,6 +781,7 @@
       `input[name="top_n"][value="${CSS.escape(String(request.top_n))}"]`
     );
     if (topInput) topInput.checked = true;
+    clearFieldErrors();
     updateScenarioSummary();
   }
 
@@ -528,43 +791,52 @@
     if (next !== current) history.pushState(null, "", next);
   }
 
+  function updateDocumentTitle(kind, request) {
+    document.title = kind
+      ? `${VIEW_LABELS[kind]} · ${request.source} → ${request.target} — ${TITLE_BASE}`
+      : TITLE_BASE;
+  }
+
   /* ---------- recent searches ---------- */
 
   const RECENTS_KEY = "payment-router-recents";
   const MAX_RECENTS = 5;
   const recentsBox = $("#recents");
 
+  function normalizeRecent(item) {
+    return {
+      kind: item.kind,
+      source: item.source,
+      target: item.target,
+      amount: item.amount,
+      profile: PROFILES.includes(item.profile) ? item.profile : "balanced",
+      top_n: item.top_n || "1",
+      on_date: item.on_date || "",
+      min_amount: item.min_amount || DEFAULT_SCAN.min,
+      max_amount: item.max_amount || DEFAULT_SCAN.max,
+    };
+  }
+
   function loadRecents() {
     try {
       const parsed = JSON.parse(localStorage.getItem(RECENTS_KEY) || "[]");
-      return Array.isArray(parsed) ? parsed.slice(0, MAX_RECENTS) : [];
+      return Array.isArray(parsed)
+        ? parsed
+            .filter((item) => item && VIEW_KINDS.includes(item.kind) && item.source && item.target)
+            .map(normalizeRecent)
+            .slice(0, MAX_RECENTS)
+        : [];
     } catch {
       return [];
     }
   }
 
   function saveRecent(kind, request) {
-    const entry = {
-      kind,
-      source: request.source,
-      target: request.target,
-      amount: request.amount,
-      profile: request.profile,
-      top_n: request.top_n,
-      on_date: request.on_date,
-    };
-    const keyOf = (item) => JSON.stringify([
-      item.kind,
-      item.source,
-      item.target,
-      item.amount,
-      item.profile,
-      item.top_n,
-      item.on_date,
-    ]);
+    const entry = normalizeRecent({ kind, ...request });
+    const key = resultSignature(kind, entry);
     const next = [
       entry,
-      ...loadRecents().filter((item) => keyOf(item) !== keyOf(entry)),
+      ...loadRecents().filter((item) => resultSignature(item.kind, item) !== key),
     ].slice(0, MAX_RECENTS);
     try {
       localStorage.setItem(RECENTS_KEY, JSON.stringify(next));
@@ -572,6 +844,17 @@
       /* storage unavailable */
     }
     renderRecents();
+  }
+
+  function recentDetail(item) {
+    const profileNote = item.profile === "balanced" ? "" : ` · ${item.profile}`;
+    const range = `${fmtCompact(item.min_amount)}–${fmtCompact(item.max_amount)}`;
+    if (item.kind === "decide") return "profiles";
+    if (item.kind === "sensitivity") return "sensitivity";
+    if (item.kind === "compare") return `vs ${item.on_date || "a past date"}${profileNote}`;
+    if (item.kind === "breakeven") return `break-even ${range}${profileNote}`;
+    if (item.kind === "regime") return `regime map ${range}`;
+    return `${item.profile}${String(item.top_n) === "1" ? "" : ` · top ${item.top_n}`}`;
   }
 
   function renderRecents() {
@@ -585,24 +868,16 @@
     recents.forEach((item) => {
       const chip = el("button", "recent-chip");
       chip.type = "button";
+      // The amount does not drive a scan across amounts, so it is not shown.
+      const corridor = RANGE_KINDS.includes(item.kind)
+        ? `${item.source}`
+        : `${fmtAmountLabel(item.amount)} ${item.source}`;
       chip.append(
-        document.createTextNode(`${fmtNumber(item.amount)} ${item.source}`),
+        document.createTextNode(corridor),
         el("span", "sep", "→"),
         document.createTextNode(item.target),
         el("span", "sep", "·"),
-        document.createTextNode(
-          item.kind === "decide"
-            ? "compare"
-            : item.kind === "sensitivity"
-              ? "sensitivity"
-              : item.kind === "compare"
-                ? `vs ${item.on_date || "a past date"}`
-                : item.kind === "breakeven"
-                  ? "break-even"
-                  : item.kind === "regime"
-                    ? "regime map"
-                  : item.profile
-        )
+        document.createTextNode(recentDetail(item))
       );
       chip.addEventListener("click", () => {
         applyRequestToForm(item);
@@ -610,6 +885,19 @@
       });
       recentsBox.append(chip);
     });
+    const clear = el("button", "recents-clear", "Clear");
+    clear.type = "button";
+    clear.setAttribute("aria-label", "Clear recent searches");
+    clear.addEventListener("click", () => {
+      try {
+        localStorage.removeItem(RECENTS_KEY);
+      } catch {
+        /* storage unavailable */
+      }
+      renderRecents();
+      routeButton.focus({ preventScroll: true });
+    });
+    recentsBox.append(clear);
     recentsBox.hidden = false;
   }
 
@@ -632,13 +920,15 @@
 
   /* ---------- route rendering ---------- */
 
-  function statTile(label, valueNode, sub) {
+  function statTile(label, valueNode, subs) {
     const tile = el("div", "stat-tile");
     tile.append(el("div", "stat-label", label));
     const value = el("div", "stat-value");
     value.append(valueNode);
     tile.append(value);
-    if (sub) tile.append(el("div", "stat-sub", sub));
+    (Array.isArray(subs) ? subs : [subs]).filter(Boolean).forEach((sub) => {
+      tile.append(typeof sub === "string" ? el("div", "stat-sub", sub) : sub);
+    });
     return tile;
   }
 
@@ -647,6 +937,21 @@
     fragment.append(document.createTextNode(main));
     if (unit) fragment.append(el("span", "unit", unit));
     return fragment;
+  }
+
+  // Derived only from the amounts on screen: what one unit sent turned into
+  // after every fee and spread on this route. It claims no market rate.
+  function effectiveRateLine(route) {
+    const sent = Number.parseFloat(route.source_amount);
+    const received = Number.parseFloat(route.final_amount);
+    if (!(sent > 0) || !Number.isFinite(received)) return null;
+    const text =
+      route.source_currency === route.target_currency
+        ? `${((received / sent) * 100).toFixed(2)}% of the amount sent arrives`
+        : `Effective 1 ${route.source_currency} = ${fmtRate(received / sent)} ${route.target_currency}`;
+    const line = el("div", "stat-sub stat-effective", text);
+    line.title = "Recipient amount divided by the amount sent, after every fee and FX spread on this route.";
+    return line;
   }
 
   function flowDiagram(route) {
@@ -675,13 +980,28 @@
     return flow;
   }
 
+  function hopEvidence(hop) {
+    const badges = el("div", "badges");
+    const kinds = new Set(
+      [hop.fee_data_source, hop.time_data_source, hop.fx_data_source].filter(Boolean)
+    );
+    ["VERIFIED", "INDUSTRY_AVERAGE", "ESTIMATED"].forEach((kind) => {
+      if (kinds.has(kind)) badges.append(provenanceBadge(kind));
+    });
+    const label = (kind) => PROVENANCE_LABELS[kind] || kind || "—";
+    badges.title =
+      `Fee: ${label(hop.fee_data_source)} · Time: ${label(hop.time_data_source)} · ` +
+      `FX: ${label(hop.fx_data_source)}`;
+    return badges;
+  }
+
   function hopTable(route) {
     const wrap = el("div", "hop-table-wrap");
-    const table = el("table", "data-table");
+    const table = el("table", "data-table hop-table");
     const head = el("thead");
     const headRow = el("tr");
     [
-      ["Hop", ""],
+      ["Hop", "num"],
       ["Network", ""],
       ["Pair", ""],
       ["Fee (USD)", "num"],
@@ -704,16 +1024,11 @@
       row.append(el("td", "", `${hop.from} → ${hop.to}`));
       row.append(el("td", "num", fmtNumber(hop.fee_usd)));
       row.append(el("td", "num", humanizeHours(hop.time_hours)));
-      row.append(el("td", "num", fmtRate(hop.fx_rate)));
+      const rateCell = el("td", "num", fmtRate(hop.fx_rate));
+      rateCell.title = `1 ${hop.from} = ${fmtRate(hop.fx_rate)} ${hop.to}`;
+      row.append(rateCell);
       const evidenceCell = el("td");
-      const badges = el("div", "badges");
-      const kinds = new Set(
-        [hop.fee_data_source, hop.time_data_source, hop.fx_data_source].filter(Boolean)
-      );
-      ["VERIFIED", "INDUSTRY_AVERAGE", "ESTIMATED"].forEach((kind) => {
-        if (kinds.has(kind)) badges.append(provenanceBadge(kind));
-      });
-      evidenceCell.append(badges);
+      evidenceCell.append(hopEvidence(hop));
       row.append(evidenceCell);
       body.append(row);
     });
@@ -749,9 +1064,11 @@
 
   function routeCard(route, rank, showRank) {
     const card = el("article", "panel route-card");
+    card.id = `route-card-${rank}`;
 
     const header = el("div", "panel-header");
     const title = el("div", "route-title");
+    title.tabIndex = -1;
     if (showRank) title.append(el("span", "rank-chip", `#${rank}`));
     title.append(pathFragment(route.path, "route-path"));
     header.append(title);
@@ -765,7 +1082,10 @@
       statTile(
         "Recipient gets",
         valueWithUnit(fmtMoney(route.final_amount, route.target_currency), route.target_currency),
-        `from ${fmtMoney(route.source_amount, route.source_currency)} ${route.source_currency} sent`
+        [
+          `from ${fmtMoney(route.source_amount, route.source_currency)} ${route.source_currency} sent`,
+          effectiveRateLine(route),
+        ]
       )
     );
     stats.append(
@@ -793,12 +1113,126 @@
     return card;
   }
 
-  function renderRoutes(data) {
-    const nodes = data.routes.map((route, index) =>
-      routeCard(route, index + 1, data.routes.length > 1)
+  function jumpToCard(rank) {
+    const card = document.getElementById(`route-card-${rank}`);
+    if (!card) return;
+    card.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "start" });
+    card.querySelector(".route-title")?.focus({ preventScroll: true });
+    card.classList.remove("is-highlighted");
+    // Restart the highlight even when the same card is chosen twice.
+    void card.offsetWidth;
+    card.classList.add("is-highlighted");
+  }
+
+  function candidateSummary(routes, request) {
+    const best = routes[0];
+    const bestAmount = Number.parseFloat(best.final_amount);
+    const target = best.target_currency;
+    const profile = PROFILE_LABELS[request.profile] || "Balanced";
+
+    const panel = el("section", "panel candidate-summary");
+    const header = el("div", "panel-header");
+    header.append(el("h2", "", "Candidate comparison"));
+    header.append(
+      el("span", "hint", `Ranked by the ${profile.toLowerCase()} cost/time score · select a row for its breakdown`)
     );
+    panel.append(header);
+
+    const wrap = el("div", "hop-table-wrap");
+    const table = el("table", "data-table candidate-table");
+    const head = el("thead");
+    const headRow = el("tr");
+    [
+      ["#", ""],
+      ["Route", ""],
+      [`Recipient gets · vs #1`, "num"],
+      ["Fees (USD)", "num"],
+      ["Time", "num"],
+      ["Evidence", "col-evidence"],
+    ].forEach(([label, className]) => headRow.append(el("th", className, label)));
+    head.append(headRow);
+    table.append(head);
+
+    const body = el("tbody");
+    routes.forEach((route, index) => {
+      const rank = index + 1;
+      const row = el("tr", "candidate-row");
+      const rankCell = el("td");
+      const jump = el("button", "rank-button", `#${rank}`);
+      jump.type = "button";
+      jump.setAttribute("aria-label", `Show the breakdown of route ${rank}`);
+      jump.addEventListener("click", () => jumpToCard(rank));
+      rankCell.append(jump);
+      row.append(rankCell);
+
+      const routeCell = el("td");
+      const routeText = el("div", "candidate-route");
+      routeText.append(pathFragment(route.path, "candidate-path"));
+      routeText.append(el("span", "candidate-networks", routeNetworks(route)));
+      routeCell.append(routeText);
+      row.append(routeCell);
+
+      // The difference to #1 sits under the amount so the comparison that
+      // matters stays visible without scrolling a narrow table sideways.
+      const amountCell = el("td", "num");
+      const amountStack = el("div", "candidate-amount");
+      amountStack.append(el("span", "", fmtMoney(route.final_amount, target)));
+      if (index === 0) {
+        amountStack.append(el("span", "candidate-muted", "top ranked"));
+      } else {
+        const delta = Number.parseFloat(route.final_amount) - bestAmount;
+        const share = bestAmount > 0 ? (delta / bestAmount) * 100 : 0;
+        const sign = delta >= 0 ? "+" : "-";
+        amountStack.append(
+          el(
+            "span",
+            `candidate-delta ${delta >= 0 ? "delta-positive" : "delta-negative"}`,
+            `${fmtSigned(delta)} ${target} (${sign}${Math.abs(share).toFixed(1)}%)`
+          )
+        );
+      }
+      amountCell.append(amountStack);
+      row.append(amountCell);
+
+      row.append(el("td", "num", fmtNumber(route.total_fee_usd)));
+      row.append(el("td", "num", humanizeHours(route.total_time_hours)));
+      const evidenceCell = el("td", "col-evidence");
+      const badges = el("div", "badges");
+      route.provenance.forEach((kind) => badges.append(provenanceBadge(kind)));
+      evidenceCell.append(badges);
+      row.append(evidenceCell);
+
+      // Mouse convenience; the rank button stays the keyboard path.
+      row.addEventListener("click", (event) => {
+        if (event.target.closest("button, a, summary")) return;
+        jumpToCard(rank);
+      });
+      body.append(row);
+    });
+    table.append(body);
+    wrap.append(table);
+    panel.append(wrap);
+    return panel;
+  }
+
+  function renderRoutes(data) {
+    const nodes = [];
     const meta = quotesMetaNode(data.quotes);
-    if (meta) nodes.unshift(meta);
+    if (meta) nodes.push(meta);
+    const requested = Number.parseInt(data.request?.top_n ?? 1, 10);
+    if (requested > data.routes.length) {
+      nodes.push(
+        el(
+          "p",
+          "result-note",
+          `Only ${data.routes.length} of the ${requested} requested candidates were found for this corridor.`
+        )
+      );
+    }
+    if (data.routes.length > 1) nodes.push(candidateSummary(data.routes, data.request || {}));
+    data.routes.forEach((route, index) =>
+      nodes.push(routeCard(route, index + 1, data.routes.length > 1))
+    );
     resultsBox.replaceChildren(...nodes);
   }
 
@@ -945,18 +1379,12 @@
     // Stable slot per distinct route, in first-appearance order.
     const slots = new Map();
     data.regions.forEach((region) => {
-      const key = region.route.path.join(">") + "|" + region.route.hops.map((h) => h.network).join(">");
+      const key = routeKey(region.route);
       if (!slots.has(key)) {
         slots.set(key, { index: slots.size, route: region.route, key });
       }
     });
-    const slotColor = (index) =>
-      index < 8 ? `var(--series-${index + 1})` : "var(--series-other)";
-    const routeNetworks = (route) => [...new Set(route.hops.map((h) => h.network))].join(", ");
-    const slotOf = (region) =>
-      slots.get(
-        region.route.path.join(">") + "|" + region.route.hops.map((h) => h.network).join(">")
-      );
+    const slotOf = (region) => slots.get(routeKey(region.route));
 
     const panel = el("section", "panel");
     const header = el("div", "panel-header");
@@ -968,6 +1396,18 @@
 
     const wrap = el("div", "regime-wrap");
     const strip = el("div", "regime-strip");
+    strip.setAttribute("role", "img");
+    strip.setAttribute(
+      "aria-label",
+      "Winning route by cost weight: " +
+        data.regions
+          .map(
+            (region) =>
+              `${region.cost_weight_start.toFixed(2)} to ${region.cost_weight_end.toFixed(2)}, ` +
+              `${region.route.path.join(" to ")} via ${routeNetworks(region.route)}`
+          )
+          .join("; ")
+    );
     data.regions.forEach((region) => {
       const slot = slotOf(region);
       const segment = el("div", "regime-segment");
@@ -1060,11 +1500,7 @@
     });
     panel.append(rows);
 
-    if (data.caveats && data.caveats.length > 0) {
-      const caveats = el("div", "caveat-rows");
-      data.caveats.forEach((caveat) => caveats.append(el("div", "", `⚠ ${caveat}`)));
-      panel.append(caveats);
-    }
+    if (data.caveats && data.caveats.length > 0) panel.append(caveatRows(data.caveats));
 
     const nodes = [panel];
     const meta = quotesMetaNode(data.quotes);
@@ -1085,6 +1521,12 @@
       nodes.push(note);
     }
     resultsBox.replaceChildren(...nodes);
+  }
+
+  function caveatRows(caveats) {
+    const rows = el("div", "caveat-rows");
+    caveats.forEach((caveat) => rows.append(el("div", "", `⚠ ${caveat}`)));
+    return rows;
   }
 
   /* ---------- comparison rendering ---------- */
@@ -1111,10 +1553,7 @@
     const route = side.route;
     addRow("Mid-rate", document.createTextNode(side.mid_rate ? fmtRate(side.mid_rate) : "—"));
     addRow("Route", pathFragment(route.path, "compare-path"));
-    addRow(
-      "Networks",
-      document.createTextNode([...new Set(route.hops.map((h) => h.network))].join(", "))
-    );
+    addRow("Networks", document.createTextNode(routeNetworks(route)));
     addRow("Fee", document.createTextNode(`$${fmtNumber(route.total_fee_usd)}`));
     addRow("ETA", document.createTextNode(humanizeHours(route.total_time_hours)));
     addRow("Recipient gets", document.createTextNode(fmtMoney(route.final_amount, target)));
@@ -1124,11 +1563,12 @@
 
   function renderComparison(data) {
     const target = data.request.target;
+    const profile = PROFILE_LABELS[data.request.profile] || "Balanced";
     const panel = el("section", "panel");
     const header = el("div", "panel-header");
     header.append(el("h2", "", "Rate-date comparison"));
     header.append(
-      el("span", "hint", "Same corridor, same rails — only the ECB fixing differs")
+      el("span", "hint", `${profile} profile · same rails, only the ECB fixing differs`)
     );
     panel.append(header);
 
@@ -1150,6 +1590,15 @@
     );
     addDelta("Fee change", data.deltas.fee_usd ? `${fmtSigned(data.deltas.fee_usd)} USD` : "—");
     addDelta(
+      "ETA change",
+      data.deltas.time_hours
+        ? Number.parseFloat(data.deltas.time_hours) === 0
+          ? "no change"
+          : `${Number.parseFloat(data.deltas.time_hours) > 0 ? "+" : "-"}` +
+            humanizeHours(Math.abs(Number.parseFloat(data.deltas.time_hours)))
+        : "—"
+    );
+    addDelta(
       "Recipient gets",
       data.deltas.receive ? `${fmtSigned(data.deltas.receive)} ${target}` : "—"
     );
@@ -1158,83 +1607,155 @@
     }
     panel.append(deltas);
 
-    if (data.caveats && data.caveats.length > 0) {
-      const caveats = el("div", "caveat-rows");
-      data.caveats.forEach((caveat) => caveats.append(el("div", "", `⚠ ${caveat}`)));
-      panel.append(caveats);
-    }
+    if (data.caveats && data.caveats.length > 0) panel.append(caveatRows(data.caveats));
 
     resultsBox.replaceChildren(panel);
+  }
+
+  /* ---------- amount-axis helpers ---------- */
+
+  // Fee structure is scale-driven, so amount axes are logarithmic.
+  function logPosition(min, max) {
+    const low = Math.log10(Math.max(min, 1e-9));
+    const span = Math.log10(Math.max(max, min * 1.000001)) - low || 1;
+    return (value) => {
+      const ratio = (Math.log10(Math.max(value, 1e-9)) - low) / span;
+      return Math.min(Math.max(ratio, 0), 1);
+    };
+  }
+
+  function amountTicks(min, max) {
+    const decades = [];
+    for (let exponent = Math.ceil(Math.log10(min)); 10 ** exponent < max; exponent += 1) {
+      const value = 10 ** exponent;
+      // Leave room around the end labels instead of printing them twice.
+      if (value / min > 1.6 && max / value > 1.6) decades.push(value);
+    }
+    // A very wide range keeps every n-th decade so labels never collide.
+    const step = Math.ceil(decades.length / 5) || 1;
+    return [min, ...decades.filter((_, index) => index % step === 0), max];
+  }
+
+  function axisTicks(ticks, toPercent) {
+    const row = el("div", "axis-ticks");
+    row.setAttribute("aria-hidden", "true");
+    ticks.forEach((value) => {
+      const percent = toPercent(value);
+      const tick = el("span", "axis-tick", fmtCompact(value));
+      tick.style.left = `${percent}%`;
+      if (percent < 4) tick.classList.add("align-start");
+      if (percent > 96) tick.classList.add("align-end");
+      row.append(tick);
+    });
+    return row;
+  }
+
+  function placeLabel(label, percent) {
+    label.classList.toggle("align-start", percent < 12);
+    label.classList.toggle("align-end", percent > 88);
   }
 
   /* ---------- break-even rendering ---------- */
 
   function renderBreakeven(data) {
     const source = data.request.source;
+    const min = Number.parseFloat(data.request.min_amount);
+    const max = Number.parseFloat(data.request.max_amount);
+    const toRatio = logPosition(min, max);
+    const toPercent = (value) => toRatio(Number.parseFloat(value)) * 100;
+    const profile = PROFILE_LABELS[data.request.profile] || "Balanced";
+
+    const slots = new Map();
+    data.regions.forEach((region) => {
+      const key = routeKey(region.route);
+      if (!slots.has(key)) slots.set(key, slots.size);
+    });
+    const routeText = (route) => `${route.path.join(" → ")} via ${routeNetworks(route)}`;
+
     const panel = el("section", "panel");
     const header = el("div", "panel-header");
     header.append(el("h2", "", "Break-even by amount"));
     header.append(
-      el("span", "hint", `Which route wins at which size · ${data.builds} quote rounds`)
+      el(
+        "span",
+        "hint",
+        `${profile} profile · which route wins at which size · ${data.builds} quote rounds`
+      )
     );
     panel.append(header);
 
-    // Geometric axis: fee structure is scale-driven, so equal ratios, not
-    // equal differences, are what the eye should compare.
-    const low = Math.log10(Math.max(Number.parseFloat(data.request.min_amount), 0.01));
-    const high = Math.log10(Math.max(Number.parseFloat(data.request.max_amount), 0.02));
-    const position = (value) =>
-      ((Math.log10(Math.max(Number.parseFloat(value), 0.01)) - low) / (high - low)) * 100;
-
-    const slots = new Map();
-    data.regions.forEach((region) => {
-      const key = [...new Set(region.route.hops.map((h) => h.network))].join(", ");
-      if (!slots.has(key)) slots.set(key, slots.size);
-    });
-    const slotColor = (index) =>
-      index < 8 ? `var(--series-${index + 1})` : "var(--series-other)";
-
     const wrap = el("div", "regime-wrap");
-    const strip = el("div", "regime-strip");
+    const frame = el("div", "strip-frame");
+    const strip = el("div", "regime-strip breakeven-strip");
+    strip.setAttribute("role", "img");
+    strip.setAttribute(
+      "aria-label",
+      "Winning route by amount sent: " +
+        data.regions
+          .map(
+            (region) =>
+              `${fmtMoney(region.amount_start, source)} to ${fmtMoney(region.amount_end, source)}, ` +
+              routeText(region.route)
+          )
+          .join("; ")
+    );
     data.regions.forEach((region) => {
-      const networks = [...new Set(region.route.hops.map((h) => h.network))].join(", ");
+      const start = toPercent(region.amount_start);
+      const end = toPercent(region.amount_end);
+      const width = Math.max(end - start, 0.8);
       const segment = el("div", "regime-segment");
-      segment.style.width = `${Math.max(
-        position(region.amount_end) - position(region.amount_start),
-        0.8
-      )}%`;
-      segment.style.background = slotColor(slots.get(networks));
+      segment.style.left = `${Math.min(start, 100 - width)}%`;
+      segment.style.width = `${width}%`;
+      segment.style.background = slotColor(slots.get(routeKey(region.route)));
       segment.title =
-        `${networks} · ${fmtMoney(region.amount_start, source)} – ` +
+        `${routeText(region.route)} · ${fmtMoney(region.amount_start, source)} – ` +
         `${fmtMoney(region.amount_end, source)}`;
       strip.append(segment);
     });
-    wrap.append(strip);
+    frame.append(strip);
 
-    const axis = el("div", "regime-axis");
-    axis.append(el("span", "", fmtMoney(data.request.min_amount, source)));
-    axis.append(el("span", "", "amount sent (log scale)"));
-    axis.append(el("span", "", fmtMoney(data.request.max_amount, source)));
-    wrap.append(axis);
+    const marker = el("div", "scenario-marker");
+    marker.setAttribute("aria-hidden", "true");
+    const markerLabel = el("span", "scenario-marker-label");
+    marker.append(markerLabel);
+    frame.append(marker);
+    wrap.append(frame);
+
+    wrap.append(axisTicks(amountTicks(min, max), (value) => toRatio(value) * 100));
+    wrap.append(el("div", "axis-caption", `Amount sent (${source}, logarithmic scale)`));
 
     const legend = el("div", "regime-legend");
+    const covered = data.regions.reduce(
+      (total, region) => total + (toPercent(region.amount_end) - toPercent(region.amount_start)),
+      0
+    );
     data.regions.forEach((region) => {
-      const networks = [...new Set(region.route.hops.map((h) => h.network))].join(", ");
       const row = el("div", "legend-row");
       const dot = el("span", "dot");
-      dot.style.background = slotColor(slots.get(networks));
+      dot.style.background = slotColor(slots.get(routeKey(region.route)));
       row.append(dot);
-      row.append(el("span", "legend-path", networks));
+      row.append(el("span", "legend-path", routeNetworks(region.route)));
       row.append(
         el(
           "span",
           "legend-meta",
-          `${fmtMoney(region.amount_start, source)} – ${fmtMoney(region.amount_end, source)}`
+          `${region.route.path.join(" → ")} · ` +
+            `${fmtMoney(region.amount_start, source)} – ${fmtMoney(region.amount_end, source)}`
         )
       );
       legend.append(row);
     });
+    if (covered < 99.5) {
+      const row = el("div", "legend-row");
+      row.append(el("span", "dot no-route-swatch"));
+      row.append(el("span", "legend-path", "No route observed"));
+      row.append(el("span", "legend-meta", "never filled in from neighbouring samples"));
+      legend.append(row);
+    }
     wrap.append(legend);
+
+    const note = el("p", "scenario-note");
+    wrap.append(note);
     panel.append(wrap);
 
     if (data.crossovers && data.crossovers.length > 0) {
@@ -1262,13 +1783,52 @@
       panel.append(rows);
     }
 
-    if (data.caveats && data.caveats.length > 0) {
-      const caveats = el("div", "caveat-rows");
-      data.caveats.forEach((caveat) => caveats.append(el("div", "", `⚠ ${caveat}`)));
-      panel.append(caveats);
-    }
+    if (data.caveats && data.caveats.length > 0) panel.append(caveatRows(data.caveats));
 
     resultsBox.replaceChildren(panel);
+
+    scenarioMarkerUpdater = (current) => {
+      const parsed = parsePositiveAmount(current.amount);
+      const sameCurrency = current.source === source;
+      const inRange = parsed !== null && parsed.value >= min && parsed.value <= max;
+      marker.hidden = !(sameCurrency && inRange);
+      if (!sameCurrency) {
+        note.textContent = `This scan is in ${source}; switch the source currency back to place your amount on it.`;
+        return;
+      }
+      if (!parsed) {
+        note.textContent = "Enter an amount to see where it falls on this scan.";
+        return;
+      }
+      const amountText = `${fmtAmountLabel(parsed.value)} ${source}`;
+      if (!inRange) {
+        note.textContent = `Your amount (${amountText}) is outside the scanned range; widen the scan range to include it.`;
+        return;
+      }
+      const percent = toRatio(parsed.value) * 100;
+      marker.style.left = `${percent}%`;
+      markerLabel.textContent = `Your amount · ${fmtCompact(parsed.value)}`;
+      placeLabel(markerLabel, percent);
+      const bracket = (data.crossovers || []).find(
+        (crossover) =>
+          parsed.value >= Number.parseFloat(crossover.bracket_low) &&
+          parsed.value <= Number.parseFloat(crossover.bracket_high)
+      );
+      if (bracket) {
+        note.textContent =
+          `Your amount (${amountText}) falls inside the ${bracket.below.networks.join(", ")} → ` +
+          `${bracket.above.networks.join(", ")} crossover bracket, so either route may win there.`;
+        return;
+      }
+      const region = data.regions.find(
+        (candidate) =>
+          parsed.value >= Number.parseFloat(candidate.amount_start) &&
+          parsed.value <= Number.parseFloat(candidate.amount_end)
+      );
+      note.textContent = region
+        ? `At your amount (${amountText}), ${routeText(region.route)} wins in this scan.`
+        : `Your amount (${amountText}) falls in a gap this scan could not route, so it cannot say which route wins there.`;
+    };
   }
 
   /* ---------- two-dimensional regime rendering ---------- */
@@ -1276,8 +1836,19 @@
   function renderRegime(data) {
     const source = data.request.source;
     const winnerById = new Map(data.winners.map((winner) => [winner.id, winner]));
-    const slotColor = (id) =>
-      id < 8 ? `var(--series-${id + 1})` : "var(--series-other)";
+    const amounts = data.amounts.map((amount) => Number.parseFloat(amount));
+    const weights = data.cost_weights;
+    const columnCount = amounts.length;
+    const rowCount = weights.length;
+    const min = amounts[0];
+    const max = amounts[columnCount - 1];
+    const toRatio = logPosition(min, max);
+    // Columns are equal-width geometric samples; a value maps between the
+    // centres of the first and last column.
+    const columnPercent = (value) =>
+      ((toRatio(value) * (columnCount - 1) + 0.5) / columnCount) * 100;
+    const rowPercent = (weight) =>
+      ((rowCount - 1 - weight * (rowCount - 1) + 0.5) / rowCount) * 100;
 
     const panel = el("section", "panel");
     const header = el("div", "panel-header");
@@ -1302,16 +1873,17 @@
     layout.append(yAxis);
 
     const plot = el("div", "regime-map-plot");
-    plot.style.gridTemplateColumns = `repeat(${data.amounts.length}, minmax(12px, 1fr))`;
-    plot.style.gridTemplateRows =
-      `repeat(${data.cost_weights.length}, minmax(3px, 1fr))`;
+    plot.style.gridTemplateColumns = `repeat(${columnCount}, minmax(12px, 1fr))`;
+    plot.style.gridTemplateRows = `repeat(${rowCount}, minmax(3px, 1fr))`;
+    plot.setAttribute("role", "img");
     plot.setAttribute(
       "aria-label",
-      `Winning routes for ${data.request.source} to ${data.request.target} by amount and cost weight`
+      `Winning routes for ${data.request.source} to ${data.request.target} by amount and cost weight. ` +
+        "The connected regions list below describes the same map."
     );
 
-    for (let weightIndex = data.cost_weights.length - 1; weightIndex >= 0; weightIndex -= 1) {
-      data.amounts.forEach((amount, amountIndex) => {
+    for (let weightIndex = rowCount - 1; weightIndex >= 0; weightIndex -= 1) {
+      amounts.forEach((amount, amountIndex) => {
         const winnerId = data.grid[weightIndex][amountIndex];
         const regionId = data.region_grid[weightIndex][amountIndex];
         const cell = el("span", `regime-map-cell${winnerId === null ? " no-route" : ""}`);
@@ -1320,23 +1892,28 @@
           cell.style.background = slotColor(winnerId);
           cell.title =
             `${fmtMoney(amount, source)} · cost weight ` +
-            `${data.cost_weights[weightIndex].toFixed(2)} · ` +
+            `${weights[weightIndex].toFixed(2)} · ` +
             `${winner.signature.path.join(" → ")} via ` +
             `${winner.signature.networks.join(", ")} · region ${regionId + 1}`;
         } else {
           cell.title =
             `${fmtMoney(amount, source)} · cost weight ` +
-            `${data.cost_weights[weightIndex].toFixed(2)} · no route`;
+            `${weights[weightIndex].toFixed(2)} · no route`;
         }
         plot.append(cell);
       });
     }
+
+    const crossX = el("span", "regime-crosshair-x");
+    const crossY = el("span", "regime-crosshair-y");
+    const crossDot = el("span", "regime-crosshair-dot");
+    [crossX, crossY, crossDot].forEach((node) => node.setAttribute("aria-hidden", "true"));
+    plot.append(crossX, crossY, crossDot);
     layout.append(plot);
 
     const xAxis = el("div", "regime-map-x-axis");
-    xAxis.append(el("span", "", fmtMoney(data.amounts[0], source)));
-    xAxis.append(el("span", "", "Amount sent · logarithmic scale"));
-    xAxis.append(el("span", "", fmtMoney(data.amounts[data.amounts.length - 1], source)));
+    xAxis.append(axisTicks(amountTicks(min, max), columnPercent));
+    xAxis.append(el("div", "axis-caption", `Amount sent (${source}, logarithmic scale)`));
     layout.append(xAxis);
     wrap.append(layout);
 
@@ -1357,6 +1934,9 @@
       legend.append(row);
     });
     wrap.append(legend);
+
+    const note = el("p", "scenario-note");
+    wrap.append(note);
     panel.append(wrap);
 
     const regionsHeader = el("div", "panel-header");
@@ -1395,20 +1975,70 @@
     });
     panel.append(regionRows);
 
-    if (data.caveats && data.caveats.length > 0) {
-      const caveats = el("div", "caveat-rows");
-      data.caveats.forEach((caveat) => caveats.append(el("div", "", `⚠ ${caveat}`)));
-      panel.append(caveats);
-    }
+    if (data.caveats && data.caveats.length > 0) panel.append(caveatRows(data.caveats));
 
     resultsBox.replaceChildren(panel);
+
+    scenarioMarkerUpdater = (current) => {
+      const parsed = parsePositiveAmount(current.amount);
+      const weight = PROFILE_COST_WEIGHTS[current.profile] ?? 0.5;
+      const sameCurrency = current.source === source;
+      const inRange = parsed !== null && parsed.value >= min && parsed.value <= max;
+      [crossX, crossY, crossDot].forEach((node) => {
+        node.hidden = !(sameCurrency && inRange);
+      });
+      if (!sameCurrency) {
+        note.textContent = `This map is in ${source}; switch the source currency back to place your scenario on it.`;
+        return;
+      }
+      if (!parsed) {
+        note.textContent = "Enter an amount to see where your scenario sits on this map.";
+        return;
+      }
+      const amountText = `${fmtAmountLabel(parsed.value)} ${source}`;
+      if (!inRange) {
+        note.textContent = `Your amount (${amountText}) is outside the sampled range; widen the scan range to include it.`;
+        return;
+      }
+      const x = columnPercent(parsed.value);
+      const y = rowPercent(weight);
+      crossX.style.left = `${x}%`;
+      crossY.style.top = `${y}%`;
+      crossDot.style.left = `${x}%`;
+      crossDot.style.top = `${y}%`;
+      // Describe the nearest observed cell rather than inventing a value
+      // for the unsampled point between cells.
+      let column = 0;
+      amounts.forEach((amount, index) => {
+        if (
+          Math.abs(Math.log(amount / parsed.value)) <
+          Math.abs(Math.log(amounts[column] / parsed.value))
+        ) {
+          column = index;
+        }
+      });
+      const row = Math.round(weight * (rowCount - 1));
+      const winnerId = data.grid[row][column];
+      const regionId = data.region_grid[row][column];
+      const profile = PROFILE_LABELS[current.profile] || "Balanced";
+      const cellText = `${fmtMoney(amounts[column], source)}, α ${weights[row].toFixed(2)}`;
+      if (winnerId === null) {
+        note.textContent = `Your scenario (${amountText}, ${profile.toLowerCase()}) is nearest the sampled cell at ${cellText}, where no route was found.`;
+        return;
+      }
+      const winner = winnerById.get(winnerId);
+      note.textContent =
+        `Your scenario (${amountText}, ${profile.toLowerCase()}) is nearest the sampled cell at ` +
+        `${cellText}: ${winner.signature.path.join(" → ")} via ` +
+        `${[...new Set(winner.signature.networks)].join(", ")} (region ${regionId + 1}).`;
+    };
   }
 
   /* ---------- sources rendering ---------- */
 
   function renderSources(records) {
     const wrap = el("div", "hop-table-wrap");
-    const table = el("table", "data-table");
+    const table = el("table", "data-table registry-table");
     const head = el("thead");
     const headRow = el("tr");
     ["Evidence", "Network", "Metric & value", "Class", "Checked", "Reference"].forEach((label) => {
@@ -1468,7 +2098,7 @@
   }
 
   async function streamExplanation(kind, data, output, signal) {
-    const response = await fetch("/api/explain", {
+    const response = await send("/api/explain", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ kind, data, lang: navigator.language || "en" }),
@@ -1557,7 +2187,7 @@
         footer.hidden = false;
         button.textContent = "Explain again";
       } catch (error) {
-        // Superseded by a new query: that run already replaced this panel.
+        // Superseded by a new result: that result already replaced this panel.
         if (isAbort(error)) return;
         output.replaceChildren(
           el("p", "ai-error", error instanceof Error ? error.message : "AI request failed.")
@@ -1574,7 +2204,7 @@
   /* ---------- result decoration (motion) ---------- */
 
   function decorateResults() {
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const reducedMotion = prefersReducedMotion();
     [...resultsBox.children].forEach((child, index) => {
       child.style.animationDelay = `${Math.min(index * 70, 350)}ms`;
     });
@@ -1613,72 +2243,124 @@
     });
   }
 
+  // On a narrow screen the results start below the form, so a finished run
+  // would otherwise change nothing the user can see.
+  function revealIfOffscreen(target) {
+    if (!target || target.hidden) return;
+    const topbar = document.querySelector(".topbar");
+    const headerBottom = topbar ? topbar.getBoundingClientRect().bottom : 0;
+    const { top } = target.getBoundingClientRect();
+    if (top >= headerBottom - 4 && top < window.innerHeight - 120) return;
+    target.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "start" });
+  }
+
   /* ---------- actions ---------- */
 
-  async function runRequest(kind, activeButton) {
+  const RENDERERS = {
+    route: renderRoutes,
+    decide: renderDecisions,
+    sensitivity: renderSensitivity,
+    compare: renderComparison,
+    breakeven: renderBreakeven,
+    regime: renderRegime,
+  };
+
+  function paramsFor(kind, request) {
+    const corridor = { source: request.source, target: request.target };
+    if (kind === "route") {
+      return { ...corridor, amount: request.amount, profile: request.profile, top_n: request.top_n };
+    }
+    if (kind === "compare") {
+      return { ...corridor, amount: request.amount, on: request.on_date, profile: request.profile };
+    }
+    if (kind === "breakeven") {
+      return { ...corridor, min: request.min_amount, max: request.max_amount, profile: request.profile };
+    }
+    if (kind === "regime") {
+      return { ...corridor, min: request.min_amount, max: request.max_amount };
+    }
+    return { ...corridor, amount: request.amount };
+  }
+
+  function snapshotView() {
+    return {
+      results: [...resultsBox.childNodes],
+      alerts: [...alertsBox.childNodes],
+      alertsHidden: alertsBox.hidden,
+      warnings: [...warningsBox.childNodes],
+      warningsHidden: warningsBox.hidden,
+      markerUpdater: scenarioMarkerUpdater,
+    };
+  }
+
+  function restoreView(snapshot) {
+    resultsBox.replaceChildren(...snapshot.results);
+    alertsBox.replaceChildren(...snapshot.alerts);
+    alertsBox.hidden = snapshot.alertsHidden;
+    warningsBox.replaceChildren(...snapshot.warnings);
+    warningsBox.hidden = snapshot.warningsHidden;
+    scenarioMarkerUpdater = snapshot.markerUpdater;
+    if (scenarioMarkerUpdater) scenarioMarkerUpdater(currentRequest());
+  }
+
+  // Called whenever the results on screen are replaced for good.
+  function retireView() {
+    if (viewController) viewController.abort();
+    viewController = null;
+    scenarioMarkerUpdater = null;
+  }
+
+  async function runRequest(kind, activeButton, { reveal = true } = {}) {
     if (!validateRequest(kind)) return;
     const request = currentRequest();
+    // A run that supersedes another inherits its snapshot: what is on screen
+    // now is that run's loading state, not something to return to.
+    const snapshot = activeRun && activeRun.snapshot ? activeRun.snapshot : snapshotView();
     const run = beginRun();
+    run.snapshot = snapshot;
     const signal = run.signal;
     clearFeedback();
     setResultsStale(false);
     setBusy(true, activeButton);
-    showSkeleton();
-    announceResults("Simulation in progress. Results will update when the calculation finishes.");
+    showSkeleton(kind);
+    announceResults(
+      `${VIEW_LABELS[kind]} in progress. Results will update when the calculation finishes; press Escape to cancel.`
+    );
     try {
-      const corridor = {
-        source: request.source,
-        target: request.target,
-        amount: request.amount,
-      };
-      const data =
-        kind === "decide"
-          ? await apiGet("/api/decide", corridor, signal)
-          : kind === "sensitivity"
-            ? await apiGet("/api/sensitivity", corridor, signal)
-            : kind === "regime"
-              ? await apiGet(
-                  "/api/regime",
-                  { source: request.source, target: request.target },
-                  signal
-                )
-            : kind === "compare"
-              ? await apiGet("/api/compare", { ...corridor, on: request.on_date }, signal)
-              : kind === "breakeven"
-                ? await apiGet(
-                    "/api/breakeven",
-                    { source: request.source, target: request.target },
-                    signal
-                  )
-                : await apiGet("/api/route", request, signal);
-      if (signal.aborted) return;
+      const data = await apiGet(ENDPOINTS[kind], paramsFor(kind, request), signal);
+      // Route a late abort through the same path as one during the fetch.
+      if (signal.aborted) throw new DOMException("Request aborted.", "AbortError");
+      retireView();
+      viewController = new AbortController();
       showWarnings(data.warnings);
-      if (kind === "decide") {
-        renderDecisions(data);
-      } else if (kind === "sensitivity") {
-        renderSensitivity(data);
-      } else if (kind === "regime") {
-        renderRegime(data);
-      } else if (kind === "compare") {
-        renderComparison(data);
-      } else if (kind === "breakeven") {
-        renderBreakeven(data);
-      } else {
-        renderRoutes(data);
-      }
-      appendAiPanel(kind, data, signal);
+      RENDERERS[kind](data, request);
+      if (scenarioMarkerUpdater) scenarioMarkerUpdater(currentRequest());
+      appendAiPanel(kind, data, viewController.signal);
       decorateResults();
       lastSuccessfulRun = { kind, request: { ...request } };
+      markResultsStale();
       saveRecent(kind, request);
       syncUrl(kind, request);
+      updateDocumentTitle(kind, request);
       announceResults(completionMessage(kind, data));
+      if (reveal) revealIfOffscreen(warningsBox.hidden ? resultsBox : warningsBox);
     } catch (error) {
-      // A superseded run is not a failure; the run that replaced it owns the view.
-      if (isAbort(error)) return;
+      if (isAbort(error)) {
+        // A superseded run is not a failure; the run that replaced it owns
+        // the view. A cancelled one puts back what was there before it.
+        if (run.cancelledByUser) {
+          restoreView(snapshot);
+          markResultsStale();
+          announceResults("Request cancelled. The previous view is shown again.");
+        }
+        return;
+      }
+      retireView();
       lastSuccessfulRun = null;
       setResultsStale(false);
       resultsBox.replaceChildren();
       showError(error instanceof Error ? error.message : "Unexpected error.");
+      if (reveal) revealIfOffscreen(alertsBox);
     } finally {
       // A superseded run must not re-enable the controls: the run that
       // replaced it is still working and owns the busy state.
@@ -1700,16 +2382,33 @@
   );
   regimeButton.addEventListener("click", () => runRequest("regime", regimeButton));
   breakevenButton.addEventListener("click", () => runRequest("breakeven", breakevenButton));
-  compareButton.addEventListener("click", () => {
-    if (!onDateInput.value) {
-      showError("Pick a rate date to compare against.");
-      return;
-    }
-    runRequest("compare", compareButton);
-  });
+  compareButton.addEventListener("click", () => runRequest("compare", compareButton));
   rerunButton.addEventListener("click", () => {
     if (!lastSuccessfulRun) return;
     runRequest(lastSuccessfulRun.kind, buttonForKind(lastSuccessfulRun.kind));
+  });
+
+  // Enter in a field that only feeds one kind of analysis runs that
+  // analysis, not the form's default route search.
+  [rangeMinInput, rangeMaxInput].forEach((input) => {
+    input.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || event.isComposing) return;
+      event.preventDefault();
+      const kind =
+        lastSuccessfulRun && RANGE_KINDS.includes(lastSuccessfulRun.kind)
+          ? lastSuccessfulRun.kind
+          : "breakeven";
+      runRequest(kind, buttonForKind(kind));
+    });
+  });
+  onDateInput.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.isComposing) return;
+    event.preventDefault();
+    runRequest("compare", compareButton);
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && activeRun && !event.defaultPrevented) cancelActiveRun();
   });
 
   const initialEmptyState = resultsBox.firstElementChild;
@@ -1718,17 +2417,19 @@
     const request = requestFromUrl();
     if (request) {
       applyRequestToForm(request);
-      runRequest(request.kind, buttonForKind(request.kind));
+      runRequest(request.kind, buttonForKind(request.kind), { reveal: false });
     } else {
       if (activeRun) {
         activeRun.abort();
         activeRun = null;
+        setBusy(false, routeButton);
       }
-      setBusy(false);
       clearFeedback();
+      retireView();
       lastSuccessfulRun = null;
       setResultsStale(false);
       resultsBox.replaceChildren(initialEmptyState);
+      updateDocumentTitle(null);
       announceResults("Results cleared. Choose a corridor to run another simulation.");
     }
   });
@@ -1792,7 +2493,7 @@
       const urlRequest = requestFromUrl();
       if (urlRequest) {
         applyRequestToForm(urlRequest);
-        runRequest(urlRequest.kind, buttonForKind(urlRequest.kind));
+        runRequest(urlRequest.kind, buttonForKind(urlRequest.kind), { reveal: false });
       }
     } catch (error) {
       showError(

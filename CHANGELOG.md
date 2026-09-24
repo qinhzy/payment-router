@@ -19,7 +19,48 @@ All notable user-visible changes are recorded here. The project follows
   the sampled boundary has to move with the fee rather than merely land
   somewhere plausible, plus deterministic graph-build counts, four-neighbour
   connectivity, the API worker-thread boundary, CLI output, deep links, and the
-  AI payload contract.
+  AI payload contract;
+- a console **candidate comparison** table above Top-3/Top-5 results: rank,
+  route and networks, recipient amount with its difference to #1, fees, time,
+  and evidence class, with each row jumping to that route's breakdown. Route
+  cards also show the effective rate, derived only from the amounts on screen;
+- a console **scan range** for the break-even and regime views (the API's
+  `min`/`max`), kept in the shareable URL, plus a "your amount" marker on the
+  break-even strip and a scenario crosshair on the regime map. Both follow the
+  form without re-running the scan and describe only observed samples: an
+  amount inside a crossover bracket says either route may win, and the regime
+  note names the nearest sampled cell rather than inventing a value between
+  cells;
+- a Cancel button (and Esc) for a running request, which restores the previous
+  view, and decade tick labels on the logarithmic amount axes.
+
+### Fixed
+
+- a break-even region no longer claims amounts at which no route was
+  observed. Regions used to start at the requested minimum even when the
+  smallest samples could not be routed (a USD→CNY scan reported CIPS from 10.00
+  although nothing routed below 23.10), and an unroutable sample between two
+  winners merged them into one region, hiding the route that won above it.
+  Regions now cover only runs of routable samples, never bridge an unroutable
+  one, and a lone routable sample is kept as a single-amount region instead of
+  being reported as no route at all. The console draws the gaps as hatched
+  "no route observed" spans;
+- break-even, regime, and rate-date comparison results now disclose provider
+  failures. Their scans discarded every build's warnings, so a provider that
+  was down silently changed which route could win. `BreakevenReport`,
+  `RegimeMap`, and `ComparisonReport` carry the failures once each, the API
+  returns them as `warnings`, the CLI prints them, and the AI system prompt
+  says a result computed without a provider must not be called the best
+  available;
+- the console's **Break-even** and **rate-date comparison** now use the selected
+  cost/time profile; both silently ran the balanced profile whatever was
+  chosen. The profile is part of their URL, stale check, and recent searches;
+- elements marked `hidden` stayed visible when a component rule set `display`:
+  an empty "Recent" bar showed on a first visit and a blank disclaimer flashed
+  before metadata loaded;
+- an AI explanation kept streaming in the background after new results
+  replaced its panel, and a run that superseded another left "Working…" as a
+  button's permanent label.
 
 ### Changed
 
@@ -38,7 +79,29 @@ All notable user-visible changes are recorded here. The project follows
   labelled as properties of the model rather than measured market facts;
 - `sensitivity` and `breakeven` now share one route-signature primitive without
   changing either module's existing public import surface. The regime analysis
-  introduces no rates, timings, fees, or provenance records.
+  introduces no rates, timings, fees, or provenance records;
+- provider warnings are grouped by network and reason: an unreachable provider
+  shows one line with its affected corridors instead of dozens of identical
+  rows;
+- the amount accepts thousands separators ("1,000.50", "10 000"). A separator
+  is only read as grouping between three-digit groups, so an ambiguous "1,5"
+  is rejected rather than silently read as fifteen;
+- the rate date and scan range validate inline beside their inputs, move focus
+  to the field at fault, and pressing Enter in them runs their own analysis
+  instead of a route search. The comparison button reads "Compare with latest",
+  matching its baseline;
+- request errors are readable: FastAPI validation details are listed by field,
+  and an unreachable server says to check `remit serve` instead of "Failed to
+  fetch";
+- the form puts **Find routes** beside the profile and groups the analyses by
+  whether they use the entered amount, removing a large empty area that wrapped
+  buttons used to leave. Focus returns to the control that started a request,
+  results scroll into view when they finish below the fold, and the page title
+  names the active view;
+- on phones the top bar stays one row, route flows run vertically, stat tiles
+  use two columns, panel headers stack, and wide tables show scroll shadows;
+  the recipient amount and its difference to #1 stay visible without
+  scrolling. Recent searches can be cleared.
 
 ## [0.8.0] - Unreleased
 

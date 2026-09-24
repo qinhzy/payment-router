@@ -29,7 +29,7 @@
       <div class="topbar-actions">
         <span class="chip" id="fx-chip" hidden></span>
         <span class="chip" id="version-chip" hidden></span>
-        <a class="chip" href="https://github.com/qinhzy/payment-router" target="_blank" rel="noopener">GitHub</a>
+        <a class="chip chip-link" href="https://github.com/qinhzy/payment-router" target="_blank" rel="noopener">GitHub</a>
         <button class="icon-button" id="theme-toggle" type="button" aria-label="Toggle color theme">
           <svg class="theme-icon-light" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
             <circle cx="12" cy="12" r="4.2" />
@@ -123,25 +123,72 @@
 
           <div class="control-actions">
             <button class="button button-primary" id="route-button" type="submit">Find routes</button>
-            <button class="button button-ghost" id="decide-button" type="button">Compare profiles</button>
-            <button class="button button-ghost" id="sensitivity-button" type="button">Sensitivity</button>
-            <button class="button button-ghost" id="regime-button" type="button">
-              Regime map
-            </button>
-            <button class="button button-ghost" id="breakeven-button" type="button">
-              Break-even
-            </button>
+          </div>
+
+          <div class="analysis-bar" role="group" aria-labelledby="analysis-label">
+            <span class="field-label" id="analysis-label">Analyze</span>
+            <div class="analysis-group">
+              <span class="analysis-caption">At this amount</span>
+              <div class="analysis-buttons">
+                <button class="button button-ghost" id="decide-button" type="button">Compare profiles</button>
+                <button class="button button-ghost" id="sensitivity-button" type="button">Sensitivity</button>
+              </div>
+            </div>
+            <div class="analysis-group">
+              <span class="analysis-caption">Across amounts</span>
+              <div class="analysis-buttons">
+                <button class="button button-ghost" id="breakeven-button" type="button">
+                  Break-even
+                </button>
+                <button class="button button-ghost" id="regime-button" type="button">
+                  Regime map
+                </button>
+                <div class="range-field">
+                  <label for="range-min">Scan</label>
+                  <input
+                    id="range-min"
+                    name="min"
+                    inputmode="decimal"
+                    autocomplete="off"
+                    spellcheck="false"
+                    value="10"
+                    aria-label="Smallest amount to scan"
+                    aria-describedby="range-error"
+                  />
+                  <span aria-hidden="true">–</span>
+                  <input
+                    id="range-max"
+                    name="max"
+                    inputmode="decimal"
+                    autocomplete="off"
+                    spellcheck="false"
+                    value="100000"
+                    aria-label="Largest amount to scan"
+                    aria-describedby="range-error"
+                  />
+                  <span class="range-currency" id="range-currency">USD</span>
+                </div>
+              </div>
+            </div>
+            <p class="field-error" id="range-error" role="alert" hidden></p>
           </div>
 
           <div class="control-row control-history">
             <label class="field-label" for="on-date">Rate date</label>
-            <input type="date" id="on-date" class="date-input" aria-label="Historical rate date" />
+            <input
+              type="date"
+              id="on-date"
+              class="date-input"
+              min="1999-01-04"
+              aria-describedby="date-error compare-hint"
+            />
             <button class="button button-ghost" id="compare-button" type="button">
-              Compare with today
+              Compare with latest
             </button>
             <span class="hint" id="compare-hint">
-              Prices the same corridor at a past ECB fixing.
+              Prices the same corridor at a past ECB fixing and at the latest one.
             </span>
+            <p class="field-error" id="date-error" role="alert" hidden></p>
           </div>
         </form>
         <div class="scenario-rail">
@@ -261,6 +308,7 @@
     <footer id="footer">
       Teaching &amp; research simulator — not a production quote, transfer, compliance, or
       financial-advice system.
+      <a href="https://github.com/qinhzy/payment-router" target="_blank" rel="noopener">Source on GitHub</a>
     </footer>
 
     <script src="./app.js"></script>

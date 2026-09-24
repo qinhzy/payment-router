@@ -61,28 +61,37 @@ into one sampled map and summarizes four-neighbour connected winner regions.
 `remit serve` starts a local web console at `http://127.0.0.1:8000` on top of
 the same routing engine the CLI uses:
 
-- corridor form with amount, currency swap, cheapest/fastest/balanced
-  preference, and top-1/3/5 candidates;
-- per-route stat tiles (recipient amount, total fees, estimated time), a
-  hop-by-hop flow diagram with live intermediate balances, and copyable
-  Mermaid source;
+- corridor form with amount (thousands separators accepted), currency swap,
+  cheapest/fastest/balanced preference, and top-1/3/5 candidates;
+- a candidate comparison table for Top-3/Top-5 results (recipient amount and
+  its difference to #1, fees, time, evidence), with each row jumping to its
+  route card;
+- per-route stat tiles (recipient amount, effective rate, total fees,
+  estimated time), a hop-by-hop flow diagram with live intermediate balances,
+  and copyable Mermaid source;
 - a side-by-side decision board for the three profiles with the same tradeoff
   note the CLI prints;
-- provenance badges on every route and hop, provider warnings, and the full
-  auditable source registry;
+- provenance badges on every route and hop, provider warnings in every view
+  (grouped by network and reason), and the full auditable source registry;
 - a profile-comparison chart when the three profiles pick different routes;
 - a **rate-date comparison** view: pick a past ECB fixing and see the same
   corridor priced under both dates side by side, with the mid-rate, fee, and
   recipient-amount deltas;
-- a **Break-even** view: which route wins across a logarithmic amount axis,
-  and the bracket where the winner changes;
+- a **Break-even** view: which route wins across a logarithmic amount axis
+  under the selected profile, and the bracket where the winner changes. Amounts
+  no route covered stay hatched, and a marker shows where the entered amount
+  falls;
 - a **Sensitivity** view: a regime strip showing which route wins as the
   cost/time weight sweeps from all-time to all-cost, per-route timing range
   bars, a balanced-stability note, and qualitative timing caveats;
 - a **Regime map** view: a two-dimensional sampled area chart with logarithmic
   amount on the horizontal axis and cost weight 0–1 on the vertical axis,
-  plus route and connected-region legends. It uses the same self-contained
-  palette in light and dark themes and never fills unsampled cells;
+  plus route and connected-region legends and a crosshair at the entered
+  amount and profile. It uses the same self-contained palette in light and
+  dark themes and never fills unsampled cells. Both amount-axis views take an
+  adjustable scan range;
+- a Cancel button (or Esc) for a running request, which restores the previous
+  view;
 - shareable URLs (every query updates the address bar and can be bookmarked or
   sent; the back button restores previous results) and recent-search chips;
 - a short-lived quote session cache so switching preference or top-N reuses
@@ -161,7 +170,7 @@ target: it adds no authentication, persistence, or payment initiation surface.
 - **Web console:** optional FastAPI backend plus a dependency-free single-page
   frontend sharing the CLI's routing service layer (`remit serve`).
 - **Quality:** Python 3.11-3.13 CI, strict pytest configuration, expanded Ruff
-  rules, package-build validation, and 296 automated tests.
+  rules, package-build validation, and 311 automated tests.
 
 ## Quick start
 
@@ -248,7 +257,8 @@ The detailed algorithm, invariants, and boundaries are documented in
 - SEPA, SWIFT, and CIPS fees are scenario assumptions, not bank tariffs.
 - Break-even and regime boundaries are sampling results. They are only known
   to fall between adjacent tested amounts or weights and are never smoothed
-  into exact market thresholds.
+  into exact market thresholds. A break-even region never extends across a
+  sampled amount that could not be routed.
 - CIPS is modelled only for CNY-target corridors. Its two-hop default is a
   teaching abstraction, and the published operating window is not an
   end-to-end delivery promise.
