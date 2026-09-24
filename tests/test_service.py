@@ -156,6 +156,7 @@ def test_historical_fx_excludes_live_quoting_networks(monkeypatch) -> None:
     assert networks_used == {"SWIFT"}
     excluded = [w for w in session.warnings if "historical run" in w.reason]
     assert [w.network for w in excluded] == ["Wise"]
+    assert [w.code for w in excluded] == ["historical_excluded"]
 
 
 def test_live_fx_keeps_live_quoting_networks() -> None:
@@ -179,3 +180,17 @@ def test_merge_warnings_reports_each_failure_once_in_first_seen_order() -> None:
     merged = service.merge_warnings((first, second), (second, first), (), (third,))
 
     assert merged == (first, second, third)
+
+
+def test_group_warnings_collapses_one_reason_per_network() -> None:
+    down = [service.BuildWarning("Wise", "USD", target, "quote request failed") for target in "AB"]
+    other = service.BuildWarning("Wise", "USD", "C", "amount too large")
+    swift = service.BuildWarning("SWIFT", "USD", "A", "quote request failed")
+
+    groups = service.group_warnings((down[0], swift, other, down[1]))
+
+    assert [(group.network, group.reason, group.pairs) for group in groups] == [
+        ("Wise", "quote request failed", (("USD", "A"), ("USD", "B"))),
+        ("SWIFT", "quote request failed", (("USD", "A"),)),
+        ("Wise", "amount too large", (("USD", "C"),)),
+    ]

@@ -24,17 +24,31 @@ from payment_router.router import PaymentRouter, RoutingPreference
 
 
 class RoutingRequestError(ValueError):
-    """A routing request that cannot be fulfilled because of invalid input."""
+    """A routing request that cannot be fulfilled because of invalid input.
+
+    ``code`` and ``params`` identify the message independently of its English
+    wording, so a frontend can show it in another language.
+    """
+
+    def __init__(self, message: str, *, code: str | None = None, **params: object) -> None:
+        super().__init__(message)
+        self.code = code
+        self.params = {name: str(value) for name, value in params.items()}
 
 
 @dataclass(frozen=True, slots=True)
 class BuildWarning:
-    """A provider failure captured while building the payment graph."""
+    """A provider failure captured while building the payment graph.
+
+    ``code`` is set when the reason is the simulator's own statement rather
+    than a provider's error text, so a frontend can translate it.
+    """
 
     network: str
     from_currency: str
     to_currency: str
     reason: str
+    code: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +99,7 @@ def networks_for_active_fx(
                 "excluded from a historical run: this provider quotes at request "
                 "time and has no rate for a past date"
             ),
+            code="historical_excluded",
         )
         for network in networks
         if network.quotes_at_request_time()
@@ -103,12 +118,41 @@ def parse_amount(raw_amount: str) -> Decimal:
     try:
         amount = Decimal(raw_amount)
     except InvalidOperation:
-        raise RoutingRequestError("Amount must be a valid decimal number.") from None
+        raise RoutingRequestError(
+            "Amount must be a valid decimal number.", code="amount_invalid"
+        ) from None
     if not amount.is_finite():
-        raise RoutingRequestError("Amount must be a valid decimal number.")
+        raise RoutingRequestError("Amount must be a valid decimal number.", code="amount_invalid")
     if amount <= 0:
-        raise RoutingRequestError("Amount must be greater than zero.")
+        raise RoutingRequestError("Amount must be greater than zero.", code="amount_not_positive")
     return amount
+
+
+@dataclass(frozen=True, slots=True)
+class WarningGroup:
+    """Provider failures that share a network and a reason."""
+
+    network: str
+    reason: str
+    pairs: tuple[tuple[str, str], ...]
+
+
+def group_warnings(warnings: tuple[BuildWarning, ...]) -> tuple[WarningGroup, ...]:
+    """Collapse failures by network and reason, keeping first-seen order.
+
+    An unreachable provider fails every corridor with the same reason; one
+    entry per network and reason keeps a failure that differs from it visible
+    instead of burying it among dozens of identical rows.
+    """
+    pairs: dict[tuple[str, str], list[tuple[str, str]]] = {}
+    for warning in warnings:
+        pairs.setdefault((warning.network, warning.reason), []).append(
+            (warning.from_currency, warning.to_currency)
+        )
+    return tuple(
+        WarningGroup(network=network, reason=reason, pairs=tuple(corridors))
+        for (network, reason), corridors in pairs.items()
+    )
 
 
 def merge_warnings(*groups: tuple[BuildWarning, ...]) -> tuple[BuildWarning, ...]:
@@ -177,7 +221,10 @@ async def build_session(
         supported_list = ", ".join(sorted(supported))
         raise RoutingRequestError(
             "Unsupported currency code(s): "
-            f"{', '.join(unsupported)}. Supported currencies: {supported_list}."
+            f"{', '.join(unsupported)}. Supported currencies: {supported_list}.",
+            code="unsupported_currency",
+            currencies=", ".join(unsupported),
+            supported=supported_list,
         )
 
     graph = PaymentGraph(

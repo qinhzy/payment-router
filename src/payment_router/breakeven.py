@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import ROUND_HALF_EVEN, Decimal
 
-from payment_router.analysis import RouteSignature, route_signature
+from payment_router.analysis import CaveatTemplate, RouteSignature, route_signature
 from payment_router.core.models import DataSource, Route
 from payment_router.decision import DecisionProfile
 from payment_router.service import (
@@ -32,6 +32,36 @@ from payment_router.service import (
 DEFAULT_SAMPLES = 12
 DEFAULT_REFINE_STEPS = 6
 _CENT = Decimal("0.01")
+
+_BRACKET = CaveatTemplate(
+    "breakeven.bracket",
+    "A crossover is a bracket, not an exact figure: the widest one here is only "
+    "known to within {width} (between {low} and {high}). Bisection narrows it; "
+    "it never resolves it to a single amount.",
+)
+_NO_CROSSOVER = CaveatTemplate(
+    "breakeven.no_crossover",
+    "No crossover was found in this range. One may still exist outside it, or "
+    "between two sampled amounts if the winner changes and changes back within "
+    "a single step.",
+)
+_ESTIMATED_FEES = CaveatTemplate(
+    "breakeven.estimated_fees",
+    "Some fees on these routes are scenario assumptions, so the crossover they "
+    "produce is a property of the model, not a measured market boundary.",
+)
+_INDEPENDENT_QUOTES = CaveatTemplate(
+    "breakeven.independent_quotes",
+    "Each sampled amount is quoted independently. A live provider can differ "
+    "between samples for reasons unrelated to the amount, and any pricing tier "
+    "the quote does not expose is invisible here.",
+)
+_UNROUTABLE = CaveatTemplate(
+    "breakeven.unroutable",
+    "{count} of {total} sampled amounts had no route at all and were skipped; "
+    "the smallest was {smallest}. Regions cover only amounts where a route was "
+    "observed and never extend across those samples.",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +182,9 @@ async def analyze(
         scanned.append((amount, await winner_at(amount)))
 
     crossovers: list[Crossover] = []
+    # Bisection midpoints are observations too: a region is represented by a
+    # sample that fell inside it, which may be one that bisection found.
+    observed: list[tuple[Decimal, Route | None]] = list(scanned)
     for (low_amount, low_route), (high_amount, high_route) in zip(
         scanned, scanned[1:], strict=False
     ):
@@ -159,18 +192,19 @@ async def analyze(
             continue
         if route_signature(low_route) == route_signature(high_route):
             continue
-        crossovers.append(
-            await _bisect(
-                low_amount,
-                low_route,
-                high_amount,
-                high_route,
-                winner_at,
-                refine_steps,
-            )
+        found, midpoints = await _bisect(
+            low_amount,
+            route_signature(low_route),
+            high_amount,
+            route_signature(high_route),
+            winner_at,
+            refine_steps,
         )
+        crossovers.extend(found)
+        observed.extend(midpoints)
+    observed.sort(key=lambda sample: sample[0])
 
-    regions = _regions_from(scanned, crossovers, min_amount, max_amount)
+    regions = _regions_from(observed, crossovers, min_amount, max_amount)
     return BreakevenReport(
         source_currency=source_currency.strip().upper(),
         target_currency=target_currency.strip().upper(),
@@ -180,53 +214,70 @@ async def analyze(
         regions=tuple(regions),
         crossovers=tuple(crossovers),
         builds=builds,
-        caveats=_caveats_for(regions, crossovers, scanned),
+        caveats=_caveats_for(regions, crossovers, observed),
         warnings=merge_warnings(*warnings),
     )
 
 
 async def _bisect(
     low_amount: Decimal,
-    low_route: Route,
+    below: RouteSignature,
     high_amount: Decimal,
-    high_route: Route,
+    above: RouteSignature,
     winner_at,
     refine_steps: int,
-) -> Crossover:
-    """Narrow the bracket that contains a change of winner."""
-    below = route_signature(low_route)
-    above = route_signature(high_route)
-    low, high = low_amount, high_amount
+) -> tuple[list[Crossover], list[tuple[Decimal, Route | None]]]:
+    """Bracket every change of winner between two routed samples.
 
-    for _ in range(refine_steps):
+    Returns the crossovers found and every midpoint observed on the way. A
+    midpoint won by a third route proves the interval holds at least two
+    changes of winner, so each half is located separately with the budget
+    that remains; treating the first change as the only one would drop the
+    second and label the third route's amounts with the wrong winner.
+    """
+    low, high = low_amount, high_amount
+    observed: list[tuple[Decimal, Route | None]] = []
+
+    for step in range(refine_steps):
         midpoint = _quantize((low + high) / 2)
         if midpoint <= low or midpoint >= high:
             break  # the bracket is already narrower than a cent
         route = await winner_at(midpoint)
+        observed.append((midpoint, route))
         if route is None:
             break  # no route at the midpoint: the bracket cannot be narrowed honestly
-        if route_signature(route) == below:
+        signature = route_signature(route)
+        if signature == below:
             low = midpoint
-        else:
-            above = route_signature(route)
+        elif signature == above:
             high = midpoint
+        else:
+            remaining = refine_steps - step - 1
+            left, left_observed = await _bisect(
+                low, below, midpoint, signature, winner_at, remaining
+            )
+            right, right_observed = await _bisect(
+                midpoint, signature, high, above, winner_at, remaining
+            )
+            return left + right, observed + left_observed + right_observed
 
-    return Crossover(
+    crossover = Crossover(
         amount=high,
         bracket_low=low,
         bracket_high=high,
         below=below,
         above=above,
     )
+    return [crossover], observed
 
 
 def _routed_runs(
-    scanned: list[tuple[Decimal, Route | None]],
+    observed: list[tuple[Decimal, Route | None]],
 ) -> list[list[tuple[Decimal, Route]]]:
-    """Split the scan into maximal runs of consecutive routable samples."""
+    """Split sorted samples into maximal runs of consecutive routable ones."""
     runs: list[list[tuple[Decimal, Route]]] = []
     current: list[tuple[Decimal, Route]] = []
-    for amount, route in scanned:
+    for amount, route in observed:
         if route is None:
             if current:
                 runs.append(current)
@@ -239,7 +290,7 @@ def _routed_runs(
 
 
 def _regions_from(
-    scanned: list[tuple[Decimal, Route | None]],
+    observed: list[tuple[Decimal, Route | None]],
     crossovers: list[Crossover],
     min_amount: Decimal,
     max_amount: Decimal,
@@ -252,12 +303,12 @@ def _regions_from(
     rather than claiming the requested bounds for amounts that never routed.
     """
     regions: list[AmountRegion] = []
-    for run in _routed_runs(scanned):
+    for run in _routed_runs(observed):
         run_start, run_end = run[0][0], run[-1][0]
         # The requested bounds only differ from the first and last samples by
         # cent rounding, so they are kept wherever those samples routed.
-        start_bound = min_amount if run_start == scanned[0][0] else run_start
-        end_bound = max_amount if run_end == scanned[-1][0] else run_end
+        start_bound = min_amount if run_start == observed[0][0] else run_start
+        end_bound = max_amount if run_end == observed[-1][0] else run_end
         inner = [
             crossover.amount for crossover in crossovers if run_start < crossover.amount <= run_end
         ]
@@ -296,50 +347,39 @@ def _regions_from(
 def _caveats_for(
     regions: list[AmountRegion],
     crossovers: list[Crossover],
-    scanned: list[tuple[Decimal, Route | None]],
+    observed: list[tuple[Decimal, Route | None]],
 ) -> tuple[str, ...]:
     caveats: list[str] = []
 
     if crossovers:
         widest = max(crossovers, key=lambda crossover: crossover.bracket_width)
         caveats.append(
-            "A crossover is a bracket, not an exact figure: the widest one here "
-            f"is only known to within {_quantize(widest.bracket_width)} "
-            "(between "
-            f"{_quantize(widest.bracket_low)} and {_quantize(widest.bracket_high)}). "
-            "Bisection narrows it; it never resolves it to a single amount."
+            _BRACKET(
+                width=_quantize(widest.bracket_width),
+                low=_quantize(widest.bracket_low),
+                high=_quantize(widest.bracket_high),
+            )
         )
     else:
-        caveats.append(
-            "No crossover was found in this range. One may still exist outside "
-            "it, or between two sampled amounts if the winner changes and "
-            "changes back within a single step."
-        )
+        caveats.append(_NO_CROSSOVER())
 
     if any(
         hop.fee_data_source is DataSource.ESTIMATED
         for region in regions
         for hop in region.route.hops
     ):
-        caveats.append(
-            "Some fees on these routes are scenario assumptions, so the "
-            "crossover they produce is a property of the model, not a "
-            "measured market boundary."
-        )
+        caveats.append(_ESTIMATED_FEES())
 
-    caveats.append(
-        "Each sampled amount is quoted independently. A live provider can "
-        "differ between samples for reasons unrelated to the amount, and any "
-        "pricing tier the quote does not expose is invisible here."
-    )
+    caveats.append(_INDEPENDENT_QUOTES())
 
-    unroutable = [amount for amount, route in scanned if route is None]
+    unroutable = [amount for amount, route in observed if route is None]
     if unroutable:
         caveats.append(
-            f"{len(unroutable)} of {len(scanned)} sampled amounts had no route "
-            "at all and were skipped; the smallest was "
-            f"{_quantize(min(unroutable))}. Regions cover only amounts where a "
-            "route was observed and never extend across those samples."
+            _UNROUTABLE(
+                count=len(unroutable),
+                total=len(observed),
+                smallest=_quantize(min(unroutable)),
+            )
         )
 
     return tuple(caveats)

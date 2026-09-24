@@ -11,6 +11,7 @@ separators or currency symbols here would silently break the console.
 
 from __future__ import annotations
 
+from payment_router.analysis import Caveat
 from payment_router.breakeven import AmountRegion, BreakevenReport, Crossover
 from payment_router.comparison import ComparisonReport, ComparisonSide
 from payment_router.core.models import DataSource, Hop, Route
@@ -26,6 +27,20 @@ from payment_router.visualizer import (
     route_node_currencies,
     route_to_mermaid,
 )
+
+
+def caveat_codes_to_json(caveats: tuple[str, ...]) -> list[dict[str, object]]:
+    """Stable codes and parameters, index-aligned with the English ``caveats``.
+
+    A client renders a caveat in another language from its code, and falls
+    back to the English sentence for a code it does not know (``None``).
+    """
+    return [
+        {"code": caveat.code, "params": dict(caveat.params)}
+        if isinstance(caveat, Caveat)
+        else {"code": None, "params": {}}
+        for caveat in caveats
+    ]
 
 
 def hop_to_json(hop: Hop) -> dict[str, object]:
@@ -95,6 +110,7 @@ def sensitivity_to_json(report: SensitivityReport) -> dict[str, object]:
             region_to_json(report.balanced_region) if report.balanced_region is not None else None
         ),
         "caveats": list(report.caveats),
+        "caveat_codes": caveat_codes_to_json(report.caveats),
     }
 
 
@@ -103,6 +119,7 @@ def warning_to_json(warning: BuildWarning) -> dict[str, object]:
         "network": warning.network,
         "pair": f"{warning.from_currency}->{warning.to_currency}",
         "reason": warning.reason,
+        "code": warning.code,
     }
 
 
@@ -156,6 +173,7 @@ def comparison_to_json(report: ComparisonReport) -> dict[str, object]:
             "route_changed": report.route_changed,
         },
         "caveats": list(report.caveats),
+        "caveat_codes": caveat_codes_to_json(report.caveats),
         "warnings": [warning_to_json(warning) for warning in report.warnings],
     }
 
@@ -192,6 +210,7 @@ def breakeven_to_json(report: BreakevenReport) -> dict[str, object]:
         "crossovers": [crossover_to_json(crossover) for crossover in report.crossovers],
         "builds": report.builds,
         "caveats": list(report.caveats),
+        "caveat_codes": caveat_codes_to_json(report.caveats),
         "warnings": [warning_to_json(warning) for warning in report.warnings],
     }
 
@@ -257,5 +276,6 @@ def regime_to_json(report: RegimeMap) -> dict[str, object]:
         ],
         "builds": report.builds,
         "caveats": list(report.caveats),
+        "caveat_codes": caveat_codes_to_json(report.caveats),
         "warnings": [warning_to_json(warning) for warning in report.warnings],
     }

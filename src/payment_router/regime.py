@@ -16,7 +16,7 @@ from collections import deque
 from dataclasses import dataclass
 from decimal import Decimal
 
-from payment_router.analysis import RouteSignature, route_signature
+from payment_router.analysis import CaveatTemplate, RouteSignature, route_signature
 from payment_router.breakeven import _log_spaced
 from payment_router.core.models import DataSource, Route
 from payment_router.router import RoutingPreference
@@ -24,6 +24,31 @@ from payment_router.service import BuildWarning, build_session, merge_warnings
 
 DEFAULT_AMOUNT_SAMPLES = 12
 DEFAULT_WEIGHT_STEPS = 60
+
+_SAMPLED_BOUNDARIES = CaveatTemplate(
+    "regime.sampled_boundaries",
+    "Region boundaries are sampled, not exact: along the amount axis a boundary "
+    "is only known to lie between neighbouring quoted amounts, and along the "
+    "preference axis between neighbouring cost weights. The map does not "
+    "interpolate or smooth unsampled cells.",
+)
+_ESTIMATED_FEES = CaveatTemplate(
+    "regime.estimated_fees",
+    "Some fees on these routes are scenario assumptions, so the region "
+    "boundaries they produce are properties of the model, not measured market "
+    "boundaries.",
+)
+_INDEPENDENT_COLUMNS = CaveatTemplate(
+    "regime.independent_columns",
+    "Each amount column is quoted independently. A live provider can differ "
+    "between columns for reasons unrelated to the amount, and any pricing tier "
+    "the quote does not expose is invisible here.",
+)
+_UNROUTABLE_CELLS = CaveatTemplate(
+    "regime.unroutable_cells",
+    "{count} of {total} sampled cells had no route and remain blank; they were "
+    "not filled from neighbouring cells.",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,37 +245,19 @@ def _caveats_for(
     grid: tuple[tuple[RouteSignature | None, ...], ...],
     winners: tuple[RegimeWinner, ...],
 ) -> tuple[str, ...]:
-    caveats = [
-        (
-            "Region boundaries are sampled, not exact: along the amount axis a "
-            "boundary is only known to lie between neighbouring quoted amounts, "
-            "and along the preference axis between neighbouring cost weights. "
-            "The map does not interpolate or smooth unsampled cells."
-        )
-    ]
+    caveats = [_SAMPLED_BOUNDARIES()]
 
     if any(
         hop.fee_data_source is DataSource.ESTIMATED
         for winner in winners
         for hop in winner.route.hops
     ):
-        caveats.append(
-            "Some fees on these routes are scenario assumptions, so the region "
-            "boundaries they produce are properties of the model, not measured "
-            "market boundaries."
-        )
+        caveats.append(_ESTIMATED_FEES())
 
-    caveats.append(
-        "Each amount column is quoted independently. A live provider can differ "
-        "between columns for reasons unrelated to the amount, and any pricing "
-        "tier the quote does not expose is invisible here."
-    )
+    caveats.append(_INDEPENDENT_COLUMNS())
 
     total_cells = sum(len(row) for row in grid)
     unroutable_cells = sum(cell is None for row in grid for cell in row)
     if unroutable_cells:
-        caveats.append(
-            f"{unroutable_cells} of {total_cells} sampled cells had no route and "
-            "remain blank; they were not filled from neighbouring cells."
-        )
+        caveats.append(_UNROUTABLE_CELLS(count=unroutable_cells, total=total_cells))
     return tuple(caveats)

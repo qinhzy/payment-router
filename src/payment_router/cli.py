@@ -918,20 +918,28 @@ def _print_error(message: str) -> None:
     error_console.print(Panel(message, title="Error", border_style="red"))
 
 
+_MAX_LISTED_CORRIDORS = 6
+
+
 def _print_build_warnings(build_warnings: tuple[BuildWarning, ...]) -> None:
     warning_table = Table(title="Provider Warnings", header_style="bold yellow")
     warning_table.add_column("Network")
-    warning_table.add_column("Pair")
     warning_table.add_column("Reason")
+    warning_table.add_column("Corridors")
 
-    for warning in build_warnings:
-        warning_table.add_row(
-            warning.network,
-            f"{warning.from_currency}->{warning.to_currency}",
-            warning.reason,
-        )
+    for group in service.group_warnings(build_warnings):
+        warning_table.add_row(group.network, group.reason, _corridor_summary(group.pairs))
 
     console.print(warning_table)
+
+
+def _corridor_summary(pairs: tuple[tuple[str, str], ...]) -> str:
+    labels = ["all corridors" if pair == ("*", "*") else f"{pair[0]}->{pair[1]}" for pair in pairs]
+    if len(labels) == 1:
+        return labels[0]
+    listed = ", ".join(labels[:_MAX_LISTED_CORRIDORS])
+    hidden = len(labels) - _MAX_LISTED_CORRIDORS
+    return f"{len(labels)}: {listed}" + (f", … (+{hidden} more)" if hidden > 0 else "")
 
 
 def _fee_style(fee_usd: Decimal) -> str:

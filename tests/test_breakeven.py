@@ -333,3 +333,62 @@ def test_a_crossover_at_the_last_routed_sample_keeps_the_new_winner() -> None:
         ("FlatFee",),
     ]
     assert report.regions[1].amount_start == report.regions[1].amount_end == above
+
+
+def test_a_third_winner_inside_one_interval_yields_both_crossovers() -> None:
+    """Between two samples the winner can change twice; both changes count.
+
+    Costs are linear in the amount: A = 0.01x, C = 20 + 0.005x, B = 50. The
+    lower envelope is A below 4000, C between 4000 and 6000, and B above, and
+    both crossings fall between the same pair of coarse samples.
+    """
+
+    def rails():
+        return [
+            Rail("SpreadOnly", spread="0.01"),
+            Rail("Middle", fixed="20", spread="0.005"),
+            Rail("FlatOnly", fixed="50"),
+        ]
+
+    samples = breakeven._log_spaced(Decimal("10"), Decimal("100000"), 12)
+    low_sample = max(amount for amount in samples if amount < Decimal("4000"))
+    high_sample = min(amount for amount in samples if amount > Decimal("6000"))
+    assert samples.index(high_sample) == samples.index(low_sample) + 1
+
+    report = _analyze(rails, samples=12, refine_steps=6)
+
+    assert [(c.below[1], c.above[1]) for c in report.crossovers] == [
+        (("SpreadOnly",), ("Middle",)),
+        (("Middle",), ("FlatOnly",)),
+    ]
+    first, second = report.crossovers
+    assert first.bracket_low <= Decimal("4000") <= first.bracket_high
+    assert second.bracket_low <= Decimal("6000") <= second.bracket_high
+    # The middle route owns the amounts between the crossings, not the route
+    # that won at the next coarse sample.
+    assert [region.signature[1] for region in report.regions] == [
+        ("SpreadOnly",),
+        ("Middle",),
+        ("FlatOnly",),
+    ]
+    middle = report.regions[1]
+    assert middle.amount_start == first.amount
+    assert middle.amount_end == second.amount
+
+
+def test_a_third_winner_is_still_reported_without_refinement_budget() -> None:
+    def rails():
+        return [
+            Rail("SpreadOnly", spread="0.01"),
+            Rail("Middle", fixed="20", spread="0.005"),
+            Rail("FlatOnly", fixed="50"),
+        ]
+
+    report = _analyze(rails, samples=12, refine_steps=1)
+
+    assert [region.signature[1] for region in report.regions] == [
+        ("SpreadOnly",),
+        ("Middle",),
+        ("FlatOnly",),
+    ]
+    assert len(report.crossovers) == 2

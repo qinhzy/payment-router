@@ -17,11 +17,25 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from payment_router.analysis import RouteSignature, route_signature
+from payment_router.analysis import CaveatTemplate, RouteSignature, route_signature
 from payment_router.core.models import DataSource, Route
 from payment_router.router import PaymentRouter, RoutingPreference
 
 DEFAULT_STEPS = 100
+
+# Routes are named by path and networks: two rails can share a path, and a
+# caveat that names only the path reads as the same warning printed twice.
+_LATER_LIVE_HOPS = CaveatTemplate(
+    "sensitivity.later_live_hops",
+    "{path} via {networks}: the live delivery estimate for hop {hops} assumes an "
+    "already-funded balance; in a multi-hop route the real clock starts when the "
+    "previous hop settles, so it may be understated.",
+)
+_ESTIMATED_TIMING = CaveatTemplate(
+    "sensitivity.estimated_timing",
+    "{path} via {networks}: timing is scenario-estimated; the displayed range "
+    "reflects the registered per-hop band, not a measured distribution.",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +124,7 @@ def _caveats_for(regions: list[WeightRegion]) -> list[str]:
             continue
         seen.add(signature)
         path_label = " -> ".join(signature[0])
+        networks = ", ".join(dict.fromkeys(signature[1]))
 
         later_live_hops = [
             index + 1
@@ -118,15 +133,8 @@ def _caveats_for(regions: list[WeightRegion]) -> list[str]:
         ]
         if later_live_hops:
             hop_list = ", ".join(str(index) for index in later_live_hops)
-            caveats.append(
-                f"{path_label}: the live delivery estimate for hop {hop_list} assumes "
-                "an already-funded balance; in a multi-hop route the real clock "
-                "starts when the previous hop settles, so it may be understated."
-            )
+            caveats.append(_LATER_LIVE_HOPS(path=path_label, networks=networks, hops=hop_list))
 
         if any(hop.time_data_source is DataSource.ESTIMATED for hop in region.route.hops):
-            caveats.append(
-                f"{path_label}: timing is scenario-estimated; the displayed range "
-                "reflects the registered per-hop band, not a measured distribution."
-            )
+            caveats.append(_ESTIMATED_TIMING(path=path_label, networks=networks))
     return caveats

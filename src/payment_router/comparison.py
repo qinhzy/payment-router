@@ -19,6 +19,7 @@ import asyncio
 from dataclasses import dataclass
 from decimal import Decimal
 
+from payment_router.analysis import CaveatTemplate
 from payment_router.core import fx
 from payment_router.core.models import Route
 from payment_router.decision import DecisionProfile
@@ -29,6 +30,24 @@ from payment_router.service import (
     merge_warnings,
     parse_amount,
     select_route_for_profile,
+)
+
+_FX_ONLY = CaveatTemplate(
+    "compare.fx_only",
+    "Only the FX table differs between the two runs. Fees, scheme rules, and "
+    "scenario timings are date-independent assumptions, so this shows the effect "
+    "of the rate regime, not what a transfer actually cost on that date.",
+)
+_EXCLUDED_NETWORKS = CaveatTemplate(
+    "compare.excluded_networks",
+    "Excluded from both sides: {networks}. These providers quote at request time "
+    "and have no rate for a past date. Dropping them from the baseline too keeps "
+    "the two sides comparable, so the deltas reflect the rate regime rather than "
+    "a difference in which providers were available.",
+)
+_NO_FIXING = CaveatTemplate(
+    "compare.no_fixing",
+    "{requested} has no published ECB fixing (weekend or holiday); {used} is used instead.",
 )
 
 FX_SWITCH_LOCK = asyncio.Lock()
@@ -220,7 +239,9 @@ async def _compare_under_lock(
             if baseline_status.fallback:
                 raise RoutingRequestError(
                     "A comparison baseline needs published rates, but live rates "
-                    f"are unavailable: {baseline_status.detail}"
+                    f"are unavailable: {baseline_status.detail}",
+                    code="compare_baseline_unavailable",
+                    detail=baseline_status.detail,
                 )
             baseline_label = "latest"
         else:
@@ -290,27 +311,13 @@ def _caveats_for(
     candidate: ComparisonSide,
     excluded_networks: tuple[str, ...],
 ) -> tuple[str, ...]:
-    caveats: list[str] = [
-        "Only the FX table differs between the two runs. Fees, scheme rules, "
-        "and scenario timings are date-independent assumptions, so this shows "
-        "the effect of the rate regime, not what a transfer actually cost on "
-        "that date."
-    ]
+    caveats: list[str] = [_FX_ONLY()]
 
     if excluded_networks:
-        caveats.append(
-            f"Excluded from both sides: {', '.join(excluded_networks)}. These "
-            "providers quote at request time and have no rate for a past date. "
-            "Dropping them from the baseline too keeps the two sides "
-            "comparable, so the deltas reflect the rate regime rather than a "
-            "difference in which providers were available."
-        )
+        caveats.append(_EXCLUDED_NETWORKS(networks=", ".join(excluded_networks)))
 
     for side in (baseline, candidate):
         if side.requested_date is not None and side.rate_date != side.requested_date:
-            caveats.append(
-                f"{side.requested_date} has no published ECB fixing "
-                f"(weekend or holiday); {side.rate_date} is used instead."
-            )
+            caveats.append(_NO_FIXING(requested=side.requested_date, used=side.rate_date))
 
     return tuple(caveats)
