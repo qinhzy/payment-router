@@ -90,7 +90,10 @@ All notable user-visible changes are recorded here. The project follows
   reported only the first change of winner and labelled the third route's
   amounts with the route that won at the next coarse sample. Both halves are
   now located separately, each change becomes its own crossover, and the
-  observed midpoints represent the regions they fall in;
+  observed midpoints represent the regions they fall in. The halves share
+  the interval's remaining steps, so one sampled interval never costs more
+  than `refine_steps` builds even when fluctuating quotes crown a new winner
+  at every midpoint;
 - sensitivity timing caveats named only the currency path, so two rails on the
   same path printed the same warning twice. They now name the networks too;
 - the regime map's vertical axis title collapsed in Chinese: characters could

@@ -177,7 +177,7 @@ target: it adds no authentication, persistence, or payment initiation surface.
 - **Web console:** optional FastAPI backend plus a dependency-free single-page
   frontend sharing the CLI's routing service layer (`remit serve`).
 - **Quality:** Python 3.11-3.13 CI, strict pytest configuration, expanded Ruff
-  rules, package-build validation, and 351 automated tests, including browser
+  rules, package-build validation, and 352 automated tests, including browser
   tests of the web console.
 
 ## Quick start

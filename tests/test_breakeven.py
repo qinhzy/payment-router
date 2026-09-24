@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 from decimal import Decimal
 
 import pytest
@@ -392,3 +393,32 @@ def test_a_third_winner_is_still_reported_without_refinement_budget() -> None:
         ("FlatOnly",),
     ]
     assert len(report.crossovers) == 2
+
+
+def test_refinement_cost_stays_bounded_when_every_midpoint_has_a_new_winner() -> None:
+    """Live quotes that wobble around a tie can crown a different winner at
+    every midpoint. Each such midpoint splits its interval in two, and if
+    both halves kept the full remaining steps the builds would double with
+    every step; the halves share one interval's steps instead.
+    """
+    names = itertools.count()
+
+    class Wobbling(Rail):
+        def get_quote(self, amount, source, target):
+            if source == target:
+                return None
+            # A new name on every quote: every build sees a new winner.
+            return NetworkQuote(
+                network_name=f"Wobbling{next(names)}",
+                fee_usd=Decimal("5"),
+                time_hours=Decimal("24"),
+                fx_rate=fx.get_mid_rate(source, target),
+                data_source=DataSource.ESTIMATED,
+            )
+
+    samples, refine_steps = 4, 10
+    report = _analyze(lambda: [Wobbling("Wobbling")], samples=samples, refine_steps=refine_steps)
+
+    # Every sampled interval changes winner; none may cost more than its steps.
+    assert report.builds <= samples + (samples - 1) * refine_steps
+    assert len(report.crossovers) >= samples - 1

@@ -144,9 +144,10 @@ async def analyze(
     """Locate the amounts where the winning route changes.
 
     ``samples`` sets the coarse scan; ``refine_steps`` bisections are then
-    spent on each boundary found. Provider load is
-    ``samples + boundaries * refine_steps`` graph builds, not one per unit of
-    precision.
+    spent on each sampled interval whose winner changes, shared by every
+    change found inside it. Provider load is at most
+    ``samples + changed_intervals * refine_steps`` graph builds, not one per
+    unit of precision, however many changes an interval turns out to hold.
     """
     if min_amount <= 0 or max_amount <= 0:
         raise ValueError("amounts must be greater than zero")
@@ -235,11 +236,15 @@ async def _bisect(
 ) -> tuple[list[Crossover], list[tuple[Decimal, Route | None]]]:
     """Bracket every change of winner between two routed samples.
 
-    Returns the crossovers found and every midpoint observed on the way. A
-    midpoint won by a third route proves the interval holds at least two
-    changes of winner, so each half is located separately with the budget
-    that remains; treating the first change as the only one would drop the
-    second and label the third route's amounts with the wrong winner.
+    Returns the crossovers found and every midpoint observed on the way; each
+    midpoint is one graph build, and there are never more than
+    ``refine_steps`` of them. A midpoint won by a third route proves the
+    interval holds at least two changes of winner, so each half is located
+    separately; treating the first change as the only one would drop the
+    second and label the third route's amounts with the wrong winner. The
+    halves share the steps that remain rather than each receiving all of
+    them: quotes that wobble around a tie can crown a new winner at every
+    midpoint, and full budgets would double the builds with every step.
     """
     low, high = low_amount, high_amount
     observed: list[tuple[Decimal, Route | None]] = []
@@ -259,11 +264,13 @@ async def _bisect(
             high = midpoint
         else:
             remaining = refine_steps - step - 1
+            # The lower half may use up to half the steps; the upper half gets
+            # whatever the lower one leaves.
             left, left_observed = await _bisect(
-                low, below, midpoint, signature, winner_at, remaining
+                low, below, midpoint, signature, winner_at, remaining - remaining // 2
             )
             right, right_observed = await _bisect(
-                midpoint, signature, high, above, winner_at, remaining
+                midpoint, signature, high, above, winner_at, remaining - len(left_observed)
             )
             return left + right, observed + left_observed + right_observed
 

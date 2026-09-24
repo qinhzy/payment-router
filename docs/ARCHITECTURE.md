@@ -148,7 +148,7 @@ graph — with a live provider, its own quote round. The search therefore scans
 coarsely on a geometric scale (fee structure is scale-driven, so equal ratios
 are the meaningful step) and then bisects only across the boundaries where the
 winner actually changed. Precision comes from bisection rather than from
-sampling density, so locating a crossing costs roughly `samples + boundaries *
+sampling density, so the scan costs at most `samples + changed_intervals *
 refine_steps` builds instead of one per unit of precision.
 
 A crossing is never observed exactly, only bracketed. The report carries the
@@ -158,10 +158,16 @@ of the model, not a measured market fact.
 
 Bisection can meet a third winner: a midpoint won by neither side of the
 bracket proves the interval holds at least two changes. Both halves are then
-located separately with the steps that remain, so each change is reported,
-and every midpoint observed on the way joins the samples a region is
-represented by. Otherwise the second change would be dropped and the third
-route's amounts labelled with the route that won at the next coarse sample.
+located separately, so each change is reported, and every midpoint observed
+on the way joins the samples a region is represented by. Otherwise the second
+change would be dropped and the third route's amounts labelled with the route
+that won at the next coarse sample. The halves share the steps that remain —
+the lower one may use half, the upper one gets the rest — rather than each
+receiving all of them: quotes that wobble around a tie can crown a new winner
+at every midpoint, and full budgets would double the builds with every step.
+One sampled interval therefore never costs more than `refine_steps` builds;
+a second change inside it is located less finely, which its wider bracket
+states.
 
 Regions are built only across runs of consecutive samples that routed. A
 sample with no route — below a fee floor, or where every provider failed —
