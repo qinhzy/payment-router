@@ -228,6 +228,26 @@ a:hover {
   border-color: transparent;
 }
 
+.chip-button {
+  min-height: 28px;
+  background: var(--surface);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.chip-button:hover {
+  color: var(--ink);
+  border-color: var(--border);
+}
+
+.chip-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .icon-button {
   display: grid;
   place-items: center;
@@ -346,6 +366,17 @@ main {
   flex: none;
   margin-top: 2px;
   color: var(--warning-text);
+}
+
+.disclaimer-body {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+
+.disclaimer-fx {
+  display: none;
+  border-color: color-mix(in srgb, var(--warning-text) 28%, transparent);
 }
 
 /* ---------- control form ---------- */
@@ -2240,11 +2271,18 @@ table.data-table th.num {
 
 .regime-map-y-title {
   writing-mode: vertical-rl;
+  /* Every script is turned sideways, the way chart axis titles usually are.
+     Upright CJK would depend on the font's vertical metrics, which some
+     fonts lack: the characters then stack on top of each other. */
+  text-orientation: sideways;
   transform: rotate(180deg);
   align-self: center;
   font-size: 12px;
   color: var(--ink-muted);
   letter-spacing: 0.02em;
+  /* The title sits in an auto-sized grid column at its min-content size;
+     CJK may break between any two characters, so keep it on one line. */
+  white-space: nowrap;
 }
 
 .regime-map-y-axis {
@@ -2471,6 +2509,14 @@ table.data-table th.num {
 .reference-link {
   font-size: 12.5px;
   white-space: nowrap;
+}
+
+.registry-note {
+  margin: 0;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--ink-muted);
+  font-size: 12.5px;
 }
 
 .caveat {
@@ -2735,14 +2781,13 @@ footer {
   }
 
   #version-chip,
-  .chip-link {
+  .chip-link,
+  #fx-chip {
     display: none;
   }
 
-  #fx-chip {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  .disclaimer-fx {
+    display: inline-block;
   }
 
   table.data-table th,

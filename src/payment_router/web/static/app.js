@@ -22,6 +22,7 @@
   const rangeMaxInput = $("#range-max");
   const rangeError = $("#range-error");
   const rangeCurrency = $("#range-currency");
+  const quickAmountsBox = $("#quick-amounts");
   const alertsBox = $("#alerts");
   const warningsBox = $("#warnings");
   const resultsBox = $("#results");
@@ -30,9 +31,8 @@
   const rerunButton = $("#rerun-button");
   const sourcesBox = $("#sources");
   const themeToggle = $("#theme-toggle");
+  const langToggle = $("#lang-toggle");
   const scenarioSummary = $("#scenario-summary");
-  const quickAmountButtons = [...document.querySelectorAll("[data-quick-amount]")];
-  const requestControls = [...form.querySelectorAll("input, select, button")];
   const actionButtons = [
     routeButton,
     decideButton,
@@ -42,21 +42,13 @@
     breakevenButton,
   ];
 
-  const TITLE_BASE = document.title;
   const DEFAULT_SCAN = { min: "10", max: "100000" };
+  const DEFAULT_QUICK_AMOUNTS = ["250", "500", "1000", "2500", "5000"];
   const PROFILES = ["cheapest", "fastest", "balanced"];
   // Cost weight of each profile, matching service.preference_for_profile.
   const PROFILE_COST_WEIGHTS = { cheapest: 1, fastest: 0, balanced: 0.5 };
   const VIEW_KINDS = ["route", "decide", "sensitivity", "compare", "breakeven", "regime"];
   const RANGE_KINDS = ["breakeven", "regime"];
-  const VIEW_LABELS = {
-    route: "Route search",
-    decide: "Profile comparison",
-    sensitivity: "Sensitivity analysis",
-    compare: "Rate-date comparison",
-    breakeven: "Break-even scan",
-    regime: "Regime map",
-  };
   const ENDPOINTS = {
     route: "/api/route",
     decide: "/api/decide",
@@ -64,6 +56,37 @@
     compare: "/api/compare",
     breakeven: "/api/breakeven",
     regime: "/api/regime",
+  };
+  // Literal catalog keys, so a test can check every key the console uses.
+  const VIEW_KEYS = {
+    route: "view.route",
+    decide: "view.decide",
+    sensitivity: "view.sensitivity",
+    compare: "view.compare",
+    breakeven: "view.breakeven",
+    regime: "view.regime",
+  };
+  const PROFILE_KEYS = {
+    cheapest: "profile.cheapest",
+    fastest: "profile.fastest",
+    balanced: "profile.balanced",
+  };
+  const PROFILE_INLINE_KEYS = {
+    cheapest: "profileInline.cheapest",
+    fastest: "profileInline.fastest",
+    balanced: "profileInline.balanced",
+  };
+  const PROVENANCE_KEYS = {
+    VERIFIED: "provenance.VERIFIED",
+    INDUSTRY_AVERAGE: "provenance.INDUSTRY_AVERAGE",
+    ESTIMATED: "provenance.ESTIMATED",
+  };
+  const ANNOUNCE_KEYS = {
+    route: "announce.route",
+    decide: "announce.decide",
+    sensitivity: "announce.sensitivity",
+    regime: "announce.regime",
+    breakeven: "announce.breakeven",
   };
 
   const CURRENCY_SYMBOLS = {
@@ -74,12 +97,6 @@
     HKD: "HK$",
     SGD: "S$",
   };
-  const PROVENANCE_LABELS = {
-    VERIFIED: "Verified",
-    INDUSTRY_AVERAGE: "Industry average",
-    ESTIMATED: "Estimated",
-  };
-  const PROFILE_LABELS = { cheapest: "Cheapest", fastest: "Fastest", balanced: "Balanced" };
 
   const ICONS = {
     error:
@@ -100,16 +117,196 @@
   };
 
   let aiMeta = null;
+  let metaInfo = null;
+  let sourceRecords = null;
+  let quickAmountsByCurrency = {};
   let resultsAnnouncementFrame = null;
   let lastSuccessfulRun = null;
+  // What the results area shows, kept so a language switch can redraw it
+  // from the same data instead of asking the server again.
+  let currentView = { type: "empty" };
   // Aborts work owned by the results on screen (an AI stream) once they are
   // replaced. It is separate from the request run, which ends on render.
   let viewController = null;
   // Set by the amount-axis views so the "your scenario" marker can follow
   // the form without re-running the scan: the marker is purely client-side.
   let scenarioMarkerUpdater = null;
+  // Messages are kept as functions so a language switch can re-render them.
+  let alertMessage = null;
+  let shownWarnings = null;
 
   const networkSlots = new Map();
+
+  /* ---------- language ---------- */
+
+  const LANG_KEY = "payment-router-lang";
+  const LANGUAGES = ["en", "zh-CN"];
+  const NUMBER_LOCALES = { en: "en-US", "zh-CN": "zh-CN" };
+  const catalogs = {};
+  const catalogRequests = {};
+  let lang = preferredLanguage();
+
+  function preferredLanguage() {
+    try {
+      const stored = localStorage.getItem(LANG_KEY);
+      if (LANGUAGES.includes(stored)) return stored;
+    } catch {
+      /* storage can be unavailable in private or hardened browser contexts */
+    }
+    const tags =
+      navigator.languages && navigator.languages.length
+        ? navigator.languages
+        : [navigator.language || "en"];
+    const first = tags.find((tag) => /^(en|zh)\b/i.test(tag));
+    return first && /^zh/i.test(first) ? "zh-CN" : "en";
+  }
+
+  function numberLocale() {
+    return NUMBER_LOCALES[lang] || "en-US";
+  }
+
+  function lookup(key) {
+    const active = catalogs[lang];
+    if (active && Object.hasOwn(active, key)) return active[key];
+    const english = catalogs.en;
+    if (english && Object.hasOwn(english, key)) return english[key];
+    return undefined;
+  }
+
+  function fill(template, params) {
+    return template.replace(/\{(\w+)\}/g, (match, name) =>
+      params && Object.hasOwn(params, name) ? String(params[name]) : match
+    );
+  }
+
+  function t(key, params) {
+    const template = lookup(key);
+    return template === undefined ? key : fill(template, params);
+  }
+
+  function tn(key, count, params) {
+    return t(`${key}.${count === 1 ? "one" : "other"}`, { count, ...params });
+  }
+
+  // For sentences that embed styled fragments: the template decides the
+  // word order and the caller supplies the nodes.
+  function tNodes(key, values) {
+    const template = lookup(key) ?? key;
+    return template
+      .split(/(\{\w+\})/)
+      .filter(Boolean)
+      .map((part) => {
+        const name = part.match(/^\{(\w+)\}$/)?.[1];
+        if (name && Object.hasOwn(values, name)) {
+          const value = values[name];
+          return value instanceof Node ? value : document.createTextNode(String(value));
+        }
+        return document.createTextNode(part);
+      });
+  }
+
+  // A backend statement in the active language when a translation exists
+  // for its code; otherwise the English sentence the backend sent. The code
+  // decides which statement applies, so a translation cannot drift from it.
+  function localizedMessage(namespace, code, params, english) {
+    if (lang !== "en" && code) {
+      const template = lookup(`${namespace}.${code}`);
+      const values = params || {};
+      // A server of another version may not send every figure the template
+      // quotes; its own English sentence is then the only complete one.
+      const complete =
+        template !== undefined &&
+        [...template.matchAll(/\{(\w+)\}/g)].every(([, name]) => Object.hasOwn(values, name));
+      if (complete) return fill(template, values);
+    }
+    return english;
+  }
+
+  function localizedCaveats(data) {
+    const codes = data.caveat_codes || [];
+    return (data.caveats || []).map((caveat, index) =>
+      localizedMessage("caveat", codes[index]?.code, codes[index]?.params, caveat)
+    );
+  }
+
+  function applyTranslations(root = document) {
+    root.querySelectorAll("[data-i18n]").forEach((node) => {
+      // A busy button shows its progress label until the request settles,
+      // and without a catalog entry the markup's English text stands.
+      if (node.dataset.busy === "true" || lookup(node.dataset.i18n) === undefined) return;
+      let params;
+      if (node.dataset.i18nParams) {
+        try {
+          params = JSON.parse(node.dataset.i18nParams);
+        } catch {
+          params = undefined;
+        }
+      }
+      node.textContent = t(node.dataset.i18n, params);
+    });
+    root.querySelectorAll("[data-i18n-attr]").forEach((node) => {
+      node.dataset.i18nAttr.split(";").forEach((entry) => {
+        const [attribute, key] = entry.split("=").map((part) => part.trim());
+        if (attribute && key && lookup(key) !== undefined) node.setAttribute(attribute, t(key));
+      });
+    });
+  }
+
+  function loadCatalog(code) {
+    catalogRequests[code] ??= fetch(`./i18n/${code}.json`, {
+      headers: { Accept: "application/json" },
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+      })
+      .then((catalog) => {
+        catalogs[code] = catalog;
+        return catalog;
+      })
+      .catch((error) => {
+        delete catalogRequests[code]; // let a later switch try again
+        throw error;
+      });
+    return catalogRequests[code];
+  }
+
+  function syncLanguageControl() {
+    // The button names the other language in that language.
+    langToggle.lang = lang === "en" ? "zh-CN" : "en";
+  }
+
+  async function setLanguage(next) {
+    try {
+      await Promise.all([loadCatalog("en"), loadCatalog(next)]);
+    } catch {
+      showError(() => t("request.catalogFailed"));
+      return;
+    }
+    lang = next;
+    try {
+      localStorage.setItem(LANG_KEY, next);
+    } catch {
+      /* the selected language still applies for this page */
+    }
+    refreshLanguage();
+  }
+
+  function refreshLanguage() {
+    document.documentElement.lang = lang;
+    applyTranslations();
+    syncThemeControl();
+    syncLanguageControl();
+    renderQuickAmounts();
+    updateScenarioSummary();
+    renderRecents();
+    renderMeta();
+    if (sourceRecords) renderSources(sourceRecords);
+    rerenderView();
+    updateDocumentTitle();
+  }
+
+  langToggle.addEventListener("click", () => setLanguage(lang === "en" ? "zh-CN" : "en"));
 
   /* ---------- helpers ---------- */
 
@@ -133,7 +330,7 @@
   function fmtNumber(value) {
     const parsed = Number.parseFloat(value);
     if (!Number.isFinite(parsed)) return String(value);
-    return parsed.toLocaleString("en-US", {
+    return parsed.toLocaleString(numberLocale(), {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
@@ -142,13 +339,16 @@
   function fmtAmountLabel(value) {
     const parsed = Number.parseFloat(value);
     if (!Number.isFinite(parsed)) return String(value);
-    return parsed.toLocaleString("en-US", { maximumFractionDigits: 2 });
+    return parsed.toLocaleString(numberLocale(), { maximumFractionDigits: 2 });
   }
 
   function fmtCompact(value) {
     const parsed = Number.parseFloat(value);
     if (!Number.isFinite(parsed)) return String(value);
-    return parsed.toLocaleString("en-US", { notation: "compact", maximumFractionDigits: 1 });
+    return parsed.toLocaleString(numberLocale(), {
+      notation: "compact",
+      maximumFractionDigits: 1,
+    });
   }
 
   function fmtMoney(value, code) {
@@ -169,13 +369,21 @@
 
   function humanizeHours(value) {
     const hours = Number.parseFloat(value);
-    if (!Number.isFinite(hours)) return `${value} h`;
+    if (!Number.isFinite(hours)) return t("time.hours", { n: value });
     const seconds = hours * 3600;
-    if (seconds < 90) return `${Math.round(seconds)} s`;
-    if (hours < 1) return `${Math.round(hours * 60)} min`;
-    if (hours < 10) return `${Math.round(hours * 10) / 10} h`;
-    if (hours < 72) return `${Math.round(hours)} h`;
-    return `${Math.round((hours / 24) * 10) / 10} d`;
+    if (seconds < 90) return t("time.seconds", { n: Math.round(seconds) });
+    if (hours < 1) return t("time.minutes", { n: Math.round(hours * 60) });
+    if (hours < 10) return t("time.hours", { n: Math.round(hours * 10) / 10 });
+    if (hours < 72) return t("time.hours", { n: Math.round(hours) });
+    return t("time.days", { n: Math.round((hours / 24) * 10) / 10 });
+  }
+
+  function profileLabel(profile) {
+    return t(PROFILE_KEYS[profile] || PROFILE_KEYS.balanced);
+  }
+
+  function profileInline(profile) {
+    return t(PROFILE_INLINE_KEYS[profile] || PROFILE_INLINE_KEYS.balanced);
   }
 
   // People type grouping separators ("1,000", "10 000"); the API wants a
@@ -235,8 +443,12 @@
     return chip;
   }
 
+  function provenanceLabel(kind) {
+    return PROVENANCE_KEYS[kind] ? t(PROVENANCE_KEYS[kind]) : String(kind || "—");
+  }
+
   function provenanceBadge(kind) {
-    return el("span", `badge badge-${String(kind).toLowerCase()}`, PROVENANCE_LABELS[kind] || kind);
+    return el("span", `badge badge-${String(kind).toLowerCase()}`, provenanceLabel(kind));
   }
 
   function pathFragment(path, className) {
@@ -269,13 +481,9 @@
   function syncThemeControl() {
     const isDark = currentTheme() === "dark";
     themeToggle.setAttribute("aria-pressed", String(isDark));
-    themeToggle.setAttribute(
-      "aria-label",
-      isDark ? "Switch to light theme" : "Switch to dark theme"
-    );
+    themeToggle.setAttribute("aria-label", isDark ? t("theme.toLight") : t("theme.toDark"));
   }
 
-  syncThemeControl();
   themeToggle.addEventListener("click", () => {
     const current = currentTheme();
     const next = current === "dark" ? "light" : "dark";
@@ -291,22 +499,30 @@
   /* ---------- alerts, warnings, loading ---------- */
 
   function clearFeedback() {
+    alertMessage = null;
+    shownWarnings = null;
     alertsBox.hidden = true;
     alertsBox.replaceChildren();
     warningsBox.hidden = true;
     warningsBox.replaceChildren();
   }
 
-  function showError(message) {
+  function renderAlert() {
+    if (!alertMessage) return;
     const alert = el("div", "alert alert-error");
     alert.setAttribute("role", "alert");
-    alert.append(svg(ICONS.error), el("span", "", message));
+    alert.append(svg(ICONS.error), el("span", "", alertMessage()));
     alertsBox.replaceChildren(alert);
     alertsBox.hidden = false;
   }
 
+  function showError(message) {
+    alertMessage = typeof message === "function" ? message : () => message;
+    renderAlert();
+  }
+
   function formatPair(pair) {
-    return pair === "*->*" ? "all corridors" : String(pair).replace("->", " → ");
+    return pair === "*->*" ? t("warnings.allCorridors") : String(pair).replace("->", " → ");
   }
 
   // A provider that is down fails every corridor with the same reason; one
@@ -315,9 +531,10 @@
   function groupWarnings(warnings) {
     const groups = new Map();
     warnings.forEach((warning) => {
-      const key = `${warning.network}\u0000${warning.reason}`;
+      const reason = localizedMessage("warning", warning.code, {}, warning.reason);
+      const key = `${warning.network}\u0000${reason}`;
       if (!groups.has(key)) {
-        groups.set(key, { network: warning.network, reason: warning.reason, pairs: [] });
+        groups.set(key, { network: warning.network, reason, pairs: [] });
       }
       groups.get(key).pairs.push(formatPair(warning.pair));
     });
@@ -331,7 +548,7 @@
       item.append(el("span", "warning-pairs-inline", ` (${group.pairs[0]})`));
     } else {
       const details = el("details", "warning-pairs");
-      details.append(el("summary", "", `${group.pairs.length} corridors`));
+      details.append(el("summary", "", t("warnings.corridors", { n: group.pairs.length })));
       details.append(el("p", "", group.pairs.join(", ")));
       item.append(details);
     }
@@ -340,12 +557,13 @@
 
   function showWarnings(warnings) {
     if (!warnings || warnings.length === 0) return;
+    shownWarnings = warnings;
     const groups = groupWarnings(warnings);
     const alert = el("div", "alert alert-warning");
     alert.setAttribute("role", "status");
     const body = el("div");
-    body.append(el("strong", "", "Some providers could not quote every corridor"));
-    body.append(el("p", "alert-note", "The results below were computed without those quotes."));
+    body.append(el("strong", "", t("warnings.title")));
+    body.append(el("p", "alert-note", t("warnings.note")));
     const visibleCount = 4;
     const list = el("ul");
     groups.slice(0, visibleCount).forEach((group) => list.append(warningItem(group)));
@@ -353,7 +571,7 @@
     if (groups.length > visibleCount) {
       const rest = groups.slice(visibleCount);
       const details = el("details");
-      details.append(el("summary", "", `Show ${rest.length} more`));
+      details.append(el("summary", "", t("warnings.more", { n: rest.length })));
       const restList = el("ul");
       rest.forEach((group) => restList.append(warningItem(group)));
       details.append(restList);
@@ -368,22 +586,17 @@
     const card = el("div", "skeleton");
     const head = el("div", "skeleton-head");
     const label = el("span", "skeleton-label");
-    label.append(svg('<span class="spinner"></span>'), document.createTextNode(`${VIEW_LABELS[kind]} running…`));
-    const cancel = el("button", "button button-ghost button-small", "Cancel");
+    label.append(
+      svg('<span class="spinner"></span>'),
+      document.createTextNode(t("busy.running", { view: t(VIEW_KEYS[kind]) }))
+    );
+    const cancel = el("button", "button button-ghost button-small", t("busy.cancel"));
     cancel.type = "button";
-    cancel.title = "Stop this request (Esc)";
+    cancel.title = t("busy.cancelTitle");
     cancel.addEventListener("click", cancelActiveRun);
     head.append(label, cancel);
     card.append(head);
-    if (RANGE_KINDS.includes(kind)) {
-      card.append(
-        el(
-          "p",
-          "skeleton-note",
-          "Every sampled amount needs its own quote round, so a scan takes longer than a single route."
-        )
-      );
-    }
+    if (RANGE_KINDS.includes(kind)) card.append(el("p", "skeleton-note", t("busy.scanNote")));
     ["60%", "38%", "82%", "70%"].forEach((width) => {
       const line = el("div", "shimmer");
       line.style.width = width;
@@ -404,24 +617,15 @@
   }
 
   function completionMessage(kind, data) {
-    const countMessage = (count, singular) =>
-      `${count} ${singular}${count === 1 ? "" : "s"} shown.`;
-    if (kind === "decide") {
-      return `Profile comparison complete. ${countMessage(data.decisions?.length ?? 0, "profile")}`;
-    }
-    if (kind === "sensitivity") {
-      return `Sensitivity analysis complete. ${countMessage(data.regions?.length ?? 0, "preference region")}`;
-    }
-    if (kind === "regime") {
-      return `Regime map complete. ${countMessage(data.regions?.length ?? 0, "connected region")}`;
-    }
-    if (kind === "compare") {
-      return "Historical comparison complete. Baseline and selected rate date are shown.";
-    }
-    if (kind === "breakeven") {
-      return `Break-even analysis complete. ${countMessage(data.regions?.length ?? 0, "amount region")}`;
-    }
-    return `Route search complete. ${countMessage(data.routes?.length ?? 0, "candidate route")}`;
+    if (kind === "compare") return t("announce.compare");
+    const counts = {
+      route: data.routes?.length,
+      decide: data.decisions?.length,
+      sensitivity: data.regions?.length,
+      regime: data.regions?.length,
+      breakeven: data.regions?.length,
+    };
+    return tn(ANNOUNCE_KEYS[kind], counts[kind] ?? 0);
   }
 
   function buttonForKind(kind) {
@@ -433,11 +637,19 @@
     return routeButton;
   }
 
+  function showBusyLabel(button) {
+    button.dataset.busy = "true";
+    button.replaceChildren(
+      svg('<span class="spinner"></span>'),
+      document.createTextNode(` ${t("form.working")}`)
+    );
+  }
+
   function restoreButtonLabels() {
     actionButtons.forEach((button) => {
-      if (button.dataset.label) {
-        button.textContent = button.dataset.label;
-        delete button.dataset.label;
+      if (button.dataset.busy === "true") {
+        delete button.dataset.busy;
+        button.textContent = t(button.dataset.i18n);
       }
     });
   }
@@ -459,7 +671,7 @@
 
   function setBusy(busy, activeButton) {
     if (busy && focusBeforeBusy === null) focusBeforeBusy = document.activeElement;
-    requestControls.forEach((control) => {
+    form.querySelectorAll("input, select, button").forEach((control) => {
       control.disabled = busy;
     });
     form.setAttribute("aria-busy", String(busy));
@@ -467,8 +679,7 @@
     // A superseding run may use a different button; only one spinner shows.
     restoreButtonLabels();
     if (busy) {
-      activeButton.dataset.label = activeButton.textContent.trim();
-      activeButton.replaceChildren(svg('<span class="spinner"></span>'), document.createTextNode(" Working…"));
+      showBusyLabel(activeButton);
     } else {
       restoreFocus(activeButton);
     }
@@ -476,14 +687,39 @@
 
   /* ---------- fetch ---------- */
 
-  async function errorDetail(response) {
+  // An error message that can be re-rendered in another language: either a
+  // console string (key) or a backend sentence with its code and params.
+  class ApiRequestError extends Error {
+    constructor({ detail = "", code = null, params = {}, key = null, keyParams = {} }) {
+      super(detail || key || "request failed");
+      this.detail = detail;
+      this.code = code;
+      this.params = params;
+      this.key = key;
+      this.keyParams = keyParams;
+    }
+
+    localized() {
+      if (this.key) return t(this.key, this.keyParams);
+      return localizedMessage("error", this.code, this.params, this.detail);
+    }
+  }
+
+  function messageOf(error) {
+    if (error instanceof ApiRequestError) return error.localized();
+    return error instanceof Error && error.message ? error.message : t("request.unexpected");
+  }
+
+  async function responseError(response) {
     try {
       const payload = await response.json();
       const detail = payload ? payload.detail : undefined;
-      if (typeof detail === "string") return detail;
+      if (typeof detail === "string") {
+        return new ApiRequestError({ detail, code: payload.code || null, params: payload.params || {} });
+      }
       // FastAPI validation errors arrive as a list of {loc, msg}.
       if (Array.isArray(detail) && detail.length > 0) {
-        return detail
+        const details = detail
           .map((issue) => {
             const field = Array.isArray(issue.loc)
               ? issue.loc.filter((part) => part !== "query" && part !== "body").join(".")
@@ -491,25 +727,24 @@
             return field ? `${field}: ${issue.msg}` : String(issue.msg);
           })
           .join("; ");
+        return new ApiRequestError({ key: "request.invalid", keyParams: { details } });
       }
     } catch {
       /* non-JSON error body */
     }
-    if (response.status >= 500) {
-      return `The simulator server failed (HTTP ${response.status}). Check the terminal running remit serve.`;
-    }
-    return `Request failed with status ${response.status}.`;
+    const status = response.status;
+    return new ApiRequestError({
+      key: status >= 500 ? "request.serverFailed" : "request.failed",
+      keyParams: { status },
+    });
   }
-
-  const UNREACHABLE_MESSAGE =
-    "Cannot reach the local simulator server. Check that remit serve is still running, then try again.";
 
   async function send(path, init) {
     try {
       return await fetch(path, init);
     } catch (error) {
       if (isAbort(error)) throw error;
-      throw new Error(UNREACHABLE_MESSAGE);
+      throw new ApiRequestError({ key: "request.unreachable" });
     }
   }
 
@@ -519,9 +754,7 @@
       headers: { Accept: "application/json" },
       signal,
     });
-    if (!response.ok) {
-      throw new Error(await errorDetail(response));
-    }
+    if (!response.ok) throw await responseError(response);
     return response.json();
   }
 
@@ -562,18 +795,19 @@
 
   function updateScenarioSummary() {
     const parsed = parsePositiveAmount(amountInput.value);
-    const amountLabel = parsed
-      ? parsed.value.toLocaleString("en-US", { maximumFractionDigits: 2 })
-      : amountInput.value.trim() || "—";
-    const profile = PROFILE_LABELS[form.elements.profile.value] || "Balanced";
+    const amount = parsed ? fmtAmountLabel(parsed.value) : amountInput.value.trim() || "—";
     const candidateCount = form.elements.top_n.value;
-    const candidates = candidateCount === "1" ? "Best route" : `Top ${candidateCount} routes`;
-    scenarioSummary.textContent =
-      `${amountLabel} ${sourceSelect.value || "—"} → ${targetSelect.value || "—"}` +
-      ` · ${profile} · ${candidates}`;
+    scenarioSummary.textContent = t("scenario.summary", {
+      amount,
+      source: sourceSelect.value || "—",
+      target: targetSelect.value || "—",
+      profile: profileLabel(form.elements.profile.value),
+      candidates:
+        candidateCount === "1" ? t("scenario.best") : t("scenario.topN", { n: candidateCount }),
+    });
     rangeCurrency.textContent = sourceSelect.value || "";
 
-    quickAmountButtons.forEach((button) => {
+    quickAmountsBox.querySelectorAll("[data-quick-amount]").forEach((button) => {
       const active = parsed !== null && parsed.value === Number(button.dataset.quickAmount);
       button.classList.toggle("is-active", active);
       button.setAttribute("aria-pressed", String(active));
@@ -582,15 +816,48 @@
     if (scenarioMarkerUpdater) scenarioMarkerUpdater(currentRequest());
   }
 
+  /* ---------- quick amounts ---------- */
+
+  // Round figures of a similar size in the source currency, computed by the
+  // server from the active rate table: 250 USD, but 2,000 CNY.
+  function renderQuickAmounts() {
+    const ladder = quickAmountsByCurrency[sourceSelect.value] || DEFAULT_QUICK_AMOUNTS;
+    const label = el("span", "", t("form.quick"));
+    label.dataset.i18n = "form.quick";
+    const buttons = ladder.map((value) => {
+      const button = el("button", "", fmtAmountLabel(value));
+      button.type = "button";
+      button.dataset.quickAmount = value;
+      button.setAttribute("aria-pressed", "false");
+      button.disabled = form.getAttribute("aria-busy") === "true";
+      return button;
+    });
+    quickAmountsBox.replaceChildren(label, ...buttons);
+  }
+
+  quickAmountsBox.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-quick-amount]");
+    if (!button) return;
+    amountInput.value = button.dataset.quickAmount;
+    setFieldError(amountInput, amountError, null);
+    updateScenarioSummary();
+    markResultsStale();
+  });
+
   /* ---------- validation ---------- */
 
-  function setFieldError(input, errorNode, message) {
-    if (message) {
+  function setFieldError(input, errorNode, key, params) {
+    if (key) {
       input.setAttribute("aria-invalid", "true");
-      errorNode.textContent = message;
+      errorNode.dataset.i18n = key;
+      if (params) errorNode.dataset.i18nParams = JSON.stringify(params);
+      else delete errorNode.dataset.i18nParams;
+      errorNode.textContent = t(key, params);
       errorNode.hidden = false;
     } else {
       input.removeAttribute("aria-invalid");
+      delete errorNode.dataset.i18n;
+      delete errorNode.dataset.i18nParams;
       errorNode.textContent = "";
       errorNode.hidden = true;
     }
@@ -598,22 +865,18 @@
 
   function clearRangeError() {
     rangeMinInput.removeAttribute("aria-invalid");
-    setFieldError(rangeMaxInput, rangeError, "");
+    setFieldError(rangeMaxInput, rangeError, null);
   }
 
   function clearFieldErrors() {
-    setFieldError(amountInput, amountError, "");
-    setFieldError(onDateInput, dateError, "");
+    setFieldError(amountInput, amountError, null);
+    setFieldError(onDateInput, dateError, null);
     clearRangeError();
   }
 
   function validateAmount() {
     if (parsePositiveAmount(amountInput.value)) return true;
-    setFieldError(
-      amountInput,
-      amountError,
-      "Enter an amount greater than zero, such as 1000 or 1,000.50."
-    );
+    setFieldError(amountInput, amountError, "validate.amount");
     amountInput.focus();
     return false;
   }
@@ -622,37 +885,37 @@
     const low = parsePositiveAmount(rangeMinInput.value);
     const high = parsePositiveAmount(rangeMaxInput.value);
     let culprit = null;
-    let message = "";
+    let key = null;
     if (!low) {
       culprit = rangeMinInput;
-      message = "Enter a smallest scan amount greater than zero.";
+      key = "validate.rangeMin";
     } else if (!high) {
       culprit = rangeMaxInput;
-      message = "Enter a largest scan amount greater than zero.";
+      key = "validate.rangeMax";
     } else if (low.value >= high.value) {
       culprit = rangeMaxInput;
-      message = "The scan range must end above where it starts.";
+      key = "validate.rangeOrder";
     }
     if (!culprit) return true;
-    culprit.setAttribute("aria-invalid", "true");
-    rangeError.textContent = message;
-    rangeError.hidden = false;
+    setFieldError(culprit, rangeError, key);
     culprit.focus();
     return false;
   }
 
   function validateDate() {
     const value = onDateInput.value;
-    let message = "";
+    let key = null;
+    let params;
     if (!value) {
-      message = "Pick a past rate date to compare with the latest ECB fixing.";
+      key = "validate.dateMissing";
     } else if (onDateInput.min && value < onDateInput.min) {
-      message = `ECB reference rates start on ${onDateInput.min}.`;
+      key = "validate.dateTooEarly";
+      params = { date: onDateInput.min };
     } else if (onDateInput.max && value > onDateInput.max) {
-      message = "Pick a date that is not in the future.";
+      key = "validate.dateFuture";
     }
-    if (!message) return true;
-    setFieldError(onDateInput, dateError, message);
+    if (!key) return true;
+    setFieldError(onDateInput, dateError, key, params);
     onDateInput.focus();
     return false;
   }
@@ -665,23 +928,17 @@
   }
 
   form.addEventListener("input", (event) => {
-    if (event.target === amountInput) setFieldError(amountInput, amountError, "");
+    if (event.target === amountInput) setFieldError(amountInput, amountError, null);
     if (event.target === rangeMinInput || event.target === rangeMaxInput) clearRangeError();
-    if (event.target === onDateInput) setFieldError(onDateInput, dateError, "");
+    if (event.target === onDateInput) setFieldError(onDateInput, dateError, null);
+    if (event.target === sourceSelect) renderQuickAmounts();
     updateScenarioSummary();
     markResultsStale();
   });
-  form.addEventListener("change", () => {
+  form.addEventListener("change", (event) => {
+    if (event.target === sourceSelect) renderQuickAmounts();
     updateScenarioSummary();
     markResultsStale();
-  });
-  quickAmountButtons.forEach((button) => {
-    button.addEventListener("click", () => {
-      amountInput.value = button.dataset.quickAmount;
-      setFieldError(amountInput, amountError, "");
-      updateScenarioSummary();
-      markResultsStale();
-    });
   });
 
   /* ---------- sharable URL state ---------- */
@@ -782,6 +1039,7 @@
     );
     if (topInput) topInput.checked = true;
     clearFieldErrors();
+    renderQuickAmounts();
     updateScenarioSummary();
   }
 
@@ -791,10 +1049,13 @@
     if (next !== current) history.pushState(null, "", next);
   }
 
-  function updateDocumentTitle(kind, request) {
-    document.title = kind
-      ? `${VIEW_LABELS[kind]} · ${request.source} → ${request.target} — ${TITLE_BASE}`
-      : TITLE_BASE;
+  function updateDocumentTitle() {
+    const base = t("meta.title");
+    document.title =
+      currentView.type === "results"
+        ? `${t(VIEW_KEYS[currentView.kind])} · ${currentView.request.source} → ` +
+          `${currentView.request.target} — ${base}`
+        : base;
   }
 
   /* ---------- recent searches ---------- */
@@ -847,14 +1108,17 @@
   }
 
   function recentDetail(item) {
-    const profileNote = item.profile === "balanced" ? "" : ` · ${item.profile}`;
+    const profileNote = item.profile === "balanced" ? "" : ` · ${profileLabel(item.profile)}`;
     const range = `${fmtCompact(item.min_amount)}–${fmtCompact(item.max_amount)}`;
-    if (item.kind === "decide") return "profiles";
-    if (item.kind === "sensitivity") return "sensitivity";
-    if (item.kind === "compare") return `vs ${item.on_date || "a past date"}${profileNote}`;
-    if (item.kind === "breakeven") return `break-even ${range}${profileNote}`;
-    if (item.kind === "regime") return `regime map ${range}`;
-    return `${item.profile}${String(item.top_n) === "1" ? "" : ` · top ${item.top_n}`}`;
+    if (item.kind === "decide") return t("recents.profiles");
+    if (item.kind === "sensitivity") return t("recents.sensitivity");
+    if (item.kind === "compare") {
+      return t("recents.compare", { date: item.on_date || t("recents.comparePast") }) + profileNote;
+    }
+    if (item.kind === "breakeven") return t("recents.breakeven", { range }) + profileNote;
+    if (item.kind === "regime") return t("recents.regime", { range });
+    const topNote = String(item.top_n) === "1" ? "" : ` · ${t("recents.topN", { n: item.top_n })}`;
+    return profileLabel(item.profile) + topNote;
   }
 
   function renderRecents() {
@@ -864,7 +1128,7 @@
       recentsBox.replaceChildren();
       return;
     }
-    recentsBox.replaceChildren(el("span", "recents-label", "Recent"));
+    recentsBox.replaceChildren(el("span", "recents-label", t("recents.label")));
     recents.forEach((item) => {
       const chip = el("button", "recent-chip");
       chip.type = "button";
@@ -885,9 +1149,9 @@
       });
       recentsBox.append(chip);
     });
-    const clear = el("button", "recents-clear", "Clear");
+    const clear = el("button", "recents-clear", t("recents.clear"));
     clear.type = "button";
-    clear.setAttribute("aria-label", "Clear recent searches");
+    clear.setAttribute("aria-label", t("recents.clearLabel"));
     clear.addEventListener("click", () => {
       try {
         localStorage.removeItem(RECENTS_KEY);
@@ -909,10 +1173,12 @@
     wrap.setAttribute("role", "status");
     wrap.append(el("span", "dot"));
     const time = new Date(quotes.quoted_at);
-    const stamp = Number.isNaN(time.getTime()) ? quotes.quoted_at : time.toLocaleTimeString();
+    const stamp = Number.isNaN(time.getTime())
+      ? quotes.quoted_at
+      : time.toLocaleTimeString(numberLocale());
     wrap.append(
       document.createTextNode(
-        quotes.from_cache ? `Quotes cached from ${stamp}` : `Quotes fetched at ${stamp}`
+        t(quotes.from_cache ? "quotes.cached" : "quotes.fetched", { time: stamp })
       )
     );
     return wrap;
@@ -947,10 +1213,14 @@
     if (!(sent > 0) || !Number.isFinite(received)) return null;
     const text =
       route.source_currency === route.target_currency
-        ? `${((received / sent) * 100).toFixed(2)}% of the amount sent arrives`
-        : `Effective 1 ${route.source_currency} = ${fmtRate(received / sent)} ${route.target_currency}`;
+        ? t("route.arrivesShare", { share: ((received / sent) * 100).toFixed(2) })
+        : t("route.effective", {
+            source: route.source_currency,
+            rate: fmtRate(received / sent),
+            target: route.target_currency,
+          });
     const line = el("div", "stat-sub stat-effective", text);
-    line.title = "Recipient amount divided by the amount sent, after every fee and FX spread on this route.";
+    line.title = t("route.effectiveTitle");
     return line;
   }
 
@@ -966,7 +1236,10 @@
           el(
             "div",
             "flow-edge-meta",
-            `fee $${fmtNumber(hop.fee_usd)} · ${humanizeHours(hop.time_hours)}`
+            t("route.feeTime", {
+              fee: `$${fmtNumber(hop.fee_usd)}`,
+              time: humanizeHours(hop.time_hours),
+            })
           )
         );
         flow.append(edge);
@@ -988,10 +1261,11 @@
     ["VERIFIED", "INDUSTRY_AVERAGE", "ESTIMATED"].forEach((kind) => {
       if (kinds.has(kind)) badges.append(provenanceBadge(kind));
     });
-    const label = (kind) => PROVENANCE_LABELS[kind] || kind || "—";
-    badges.title =
-      `Fee: ${label(hop.fee_data_source)} · Time: ${label(hop.time_data_source)} · ` +
-      `FX: ${label(hop.fx_data_source)}`;
+    badges.title = t("hop.evidenceTitle", {
+      fee: provenanceLabel(hop.fee_data_source),
+      time: provenanceLabel(hop.time_data_source),
+      fx: provenanceLabel(hop.fx_data_source),
+    });
     return badges;
   }
 
@@ -1001,15 +1275,15 @@
     const head = el("thead");
     const headRow = el("tr");
     [
-      ["Hop", "num"],
-      ["Network", ""],
-      ["Pair", ""],
-      ["Fee (USD)", "num"],
-      ["Time", "num"],
-      ["FX rate", "num"],
-      ["Evidence", ""],
-    ].forEach(([label, className]) => {
-      headRow.append(el("th", className, label));
+      ["hop.hop", "num"],
+      ["hop.network", ""],
+      ["hop.pair", ""],
+      ["hop.fee", "num"],
+      ["hop.time", "num"],
+      ["hop.rate", "num"],
+      ["hop.evidence", ""],
+    ].forEach(([key, className]) => {
+      headRow.append(el("th", className, t(key)));
     });
     head.append(headRow);
     table.append(head);
@@ -1039,22 +1313,21 @@
 
   function mermaidDetails(route) {
     const details = el("details", "mermaid-details");
-    const summary = el("summary", "", "Mermaid diagram source");
-    details.append(summary);
+    details.append(el("summary", "", t("mermaid.summary")));
     const body = el("div", "mermaid-body");
     const pre = el("pre");
     pre.append(el("code", "", route.mermaid));
-    const copy = el("button", "copy-button", "Copy");
+    const copy = el("button", "copy-button", t("mermaid.copy"));
     copy.type = "button";
     copy.addEventListener("click", async () => {
       try {
         await navigator.clipboard.writeText(route.mermaid);
-        copy.textContent = "Copied";
+        copy.textContent = t("mermaid.copied");
         setTimeout(() => {
-          copy.textContent = "Copy";
+          copy.textContent = t("mermaid.copy");
         }, 1400);
       } catch {
-        copy.textContent = "Select & copy";
+        copy.textContent = t("mermaid.selectCopy");
       }
     });
     body.append(pre, copy);
@@ -1080,29 +1353,34 @@
     const stats = el("div", "stat-row");
     stats.append(
       statTile(
-        "Recipient gets",
+        t("route.recipientGets"),
         valueWithUnit(fmtMoney(route.final_amount, route.target_currency), route.target_currency),
         [
-          `from ${fmtMoney(route.source_amount, route.source_currency)} ${route.source_currency} sent`,
+          t("route.fromSent", {
+            amount: fmtMoney(route.source_amount, route.source_currency),
+            currency: route.source_currency,
+          }),
           effectiveRateLine(route),
         ]
       )
     );
     stats.append(
       statTile(
-        "Total fees",
+        t("route.totalFees"),
         valueWithUnit(`$${fmtNumber(route.total_fee_usd)}`, "USD"),
-        route.hops.length === 1 ? "1 hop" : `${route.hops.length} hops`
+        tn("route.hops", route.hops.length)
       )
     );
     stats.append(
       statTile(
-        "Estimated time",
+        t("route.estimatedTime"),
         valueWithUnit(humanizeHours(route.total_time_hours)),
         route.total_time_min_hours !== route.total_time_max_hours
-          ? `range ${humanizeHours(route.total_time_min_hours)} – ` +
-              `${humanizeHours(route.total_time_max_hours)}`
-          : `${route.total_time_hours} hours`
+          ? t("route.timeRange", {
+              min: humanizeHours(route.total_time_min_hours),
+              max: humanizeHours(route.total_time_max_hours),
+            })
+          : t("route.timeHours", { hours: route.total_time_hours })
       )
     );
     card.append(stats);
@@ -1128,13 +1406,12 @@
     const best = routes[0];
     const bestAmount = Number.parseFloat(best.final_amount);
     const target = best.target_currency;
-    const profile = PROFILE_LABELS[request.profile] || "Balanced";
 
     const panel = el("section", "panel candidate-summary");
     const header = el("div", "panel-header");
-    header.append(el("h2", "", "Candidate comparison"));
+    header.append(el("h2", "", t("candidates.title")));
     header.append(
-      el("span", "hint", `Ranked by the ${profile.toLowerCase()} cost/time score · select a row for its breakdown`)
+      el("span", "hint", t("candidates.hint", { profile: profileInline(request.profile) }))
     );
     panel.append(header);
 
@@ -1142,14 +1419,14 @@
     const table = el("table", "data-table candidate-table");
     const head = el("thead");
     const headRow = el("tr");
+    headRow.append(el("th", "", "#"));
     [
-      ["#", ""],
-      ["Route", ""],
-      [`Recipient gets · vs #1`, "num"],
-      ["Fees (USD)", "num"],
-      ["Time", "num"],
-      ["Evidence", "col-evidence"],
-    ].forEach(([label, className]) => headRow.append(el("th", className, label)));
+      ["candidates.route", ""],
+      ["candidates.recipient", "num"],
+      ["candidates.fees", "num"],
+      ["candidates.time", "num"],
+      ["candidates.evidence", "col-evidence"],
+    ].forEach(([key, className]) => headRow.append(el("th", className, t(key))));
     head.append(headRow);
     table.append(head);
 
@@ -1160,7 +1437,7 @@
       const rankCell = el("td");
       const jump = el("button", "rank-button", `#${rank}`);
       jump.type = "button";
-      jump.setAttribute("aria-label", `Show the breakdown of route ${rank}`);
+      jump.setAttribute("aria-label", t("candidates.jump", { rank }));
       jump.addEventListener("click", () => jumpToCard(rank));
       rankCell.append(jump);
       row.append(rankCell);
@@ -1178,7 +1455,7 @@
       const amountStack = el("div", "candidate-amount");
       amountStack.append(el("span", "", fmtMoney(route.final_amount, target)));
       if (index === 0) {
-        amountStack.append(el("span", "candidate-muted", "top ranked"));
+        amountStack.append(el("span", "candidate-muted", t("candidates.topRanked")));
       } else {
         const delta = Number.parseFloat(route.final_amount) - bestAmount;
         const share = bestAmount > 0 ? (delta / bestAmount) * 100 : 0;
@@ -1225,7 +1502,7 @@
         el(
           "p",
           "result-note",
-          `Only ${data.routes.length} of the ${requested} requested candidates were found for this corridor.`
+          t("candidates.onlyFound", { found: data.routes.length, requested })
         )
       );
     }
@@ -1246,9 +1523,9 @@
     const head = el("div", "decision-head");
     const profile = el("span", "decision-profile");
     profile.append(svg(ICONS[decision.profile] || ICONS.balanced));
-    profile.append(document.createTextNode(PROFILE_LABELS[decision.profile] || decision.profile));
+    profile.append(document.createTextNode(profileLabel(decision.profile)));
     head.append(profile);
-    if (recommended) head.append(el("span", "badge badge-recommended", "★ Recommended"));
+    if (recommended) head.append(el("span", "badge badge-recommended", t("decide.recommended")));
     card.append(head);
 
     const body = el("div", "decision-body");
@@ -1259,8 +1536,8 @@
     body.append(receive);
 
     const metrics = el("div", "decision-metrics");
-    metrics.append(el("span", "", `fee $${fmtNumber(route.total_fee_usd)}`));
-    metrics.append(el("span", "", `eta ${humanizeHours(route.total_time_hours)}`));
+    metrics.append(el("span", "", t("decide.fee", { fee: `$${fmtNumber(route.total_fee_usd)}` })));
+    metrics.append(el("span", "", t("decide.eta", { time: humanizeHours(route.total_time_hours) })));
     body.append(metrics);
 
     body.append(pathFragment(route.path, "decision-path"));
@@ -1282,20 +1559,20 @@
   function compareChart(decisions) {
     const measures = [
       {
-        title: "Total fee (USD)",
+        title: t("decide.totalFee"),
         value: (decision) => Number.parseFloat(decision.route.total_fee_usd),
         label: (decision) => `$${fmtNumber(decision.route.total_fee_usd)}`,
       },
       {
-        title: "Estimated time",
+        title: t("decide.estimatedTime"),
         value: (decision) => Number.parseFloat(decision.route.total_time_hours),
         label: (decision) => humanizeHours(decision.route.total_time_hours),
       },
     ];
     const panel = el("section", "panel");
     const header = el("div", "panel-header");
-    header.append(el("h2", "", "Profile comparison"));
-    header.append(el("span", "hint", "Same corridor, three optimization targets"));
+    header.append(el("h2", "", t("decide.chartTitle")));
+    header.append(el("span", "hint", t("decide.chartHint")));
     panel.append(header);
     const grid = el("div", "compare-grid");
     measures.forEach((measure) => {
@@ -1307,9 +1584,7 @@
           "div",
           `bar-row${decision.profile === "balanced" ? " emphasis" : ""}`
         );
-        row.append(
-          el("span", "bar-label", PROFILE_LABELS[decision.profile] || decision.profile)
-        );
+        row.append(el("span", "bar-label", profileLabel(decision.profile)));
         const track = el("div", "bar-track");
         const bar = el("div", "bar");
         const share = max > 0 ? Math.max((measure.value(decision) / max) * 100, 2) : 2;
@@ -1338,28 +1613,26 @@
     if (data.tradeoff) {
       const note = el("div", "tradeoff-note");
       const body = el("div");
-      body.append(el("strong", "", "Decision note "));
+      body.append(el("strong", "", t("decide.noteTitle")));
       if (data.tradeoff.same_route_for_all_profiles) {
-        body.append(
-          document.createTextNode("One route wins on cost, speed, and the balanced profile.")
-        );
+        body.append(document.createTextNode(t("decide.sameRoute")));
       } else {
         const target =
           data.decisions.length > 0 ? data.decisions[0].route.target_currency : "";
-        const deltaSpan = (value, unit, lowerIsBetter) => {
+        const deltaSpan = (value, text, lowerIsBetter) => {
           const good = lowerIsBetter
             ? Number.parseFloat(value) <= 0
             : Number.parseFloat(value) >= 0;
-          return el("span", good ? "delta-positive" : "delta-negative", `${fmtSigned(value)} ${unit}`);
+          return el("span", good ? "delta-positive" : "delta-negative", text);
         };
+        const { balanced_fee_delta_usd: fee, balanced_receive_delta: receive } = data.tradeoff;
+        const saved = data.tradeoff.balanced_hours_saved_vs_cheapest;
         body.append(
-          document.createTextNode("Balanced vs cheapest: fee "),
-          deltaSpan(data.tradeoff.balanced_fee_delta_usd, "USD", true),
-          document.createTextNode(", time saved "),
-          deltaSpan(data.tradeoff.balanced_hours_saved_vs_cheapest, "h", false),
-          document.createTextNode(", recipient amount "),
-          deltaSpan(data.tradeoff.balanced_receive_delta, target, false),
-          document.createTextNode(".")
+          ...tNodes("decide.tradeoff", {
+            fee: deltaSpan(fee, `${fmtSigned(fee)} USD`, true),
+            time: deltaSpan(saved, t("time.hours", { n: fmtSigned(saved) }), false),
+            receive: deltaSpan(receive, `${fmtSigned(receive)} ${target}`, false),
+          })
         );
       }
       note.append(svg(ICONS.note), body);
@@ -1375,6 +1648,12 @@
     return Number.isFinite(parsed) ? parsed : 0;
   }
 
+  function caveatRows(data) {
+    const rows = el("div", "caveat-rows");
+    localizedCaveats(data).forEach((caveat) => rows.append(el("div", "", `⚠ ${caveat}`)));
+    return rows;
+  }
+
   function renderSensitivity(data) {
     // Stable slot per distinct route, in first-appearance order.
     const slots = new Map();
@@ -1388,10 +1667,8 @@
 
     const panel = el("section", "panel");
     const header = el("div", "panel-header");
-    header.append(el("h2", "", "Preference sensitivity"));
-    header.append(
-      el("span", "hint", "Where the winning route flips as the cost/time weight moves")
-    );
+    header.append(el("h2", "", t("sensitivity.title")));
+    header.append(el("span", "hint", t("sensitivity.hint")));
     panel.append(header);
 
     const wrap = el("div", "regime-wrap");
@@ -1399,14 +1676,18 @@
     strip.setAttribute("role", "img");
     strip.setAttribute(
       "aria-label",
-      "Winning route by cost weight: " +
-        data.regions
-          .map(
-            (region) =>
-              `${region.cost_weight_start.toFixed(2)} to ${region.cost_weight_end.toFixed(2)}, ` +
-              `${region.route.path.join(" to ")} via ${routeNetworks(region.route)}`
+      t("sensitivity.stripLabel", {
+        regions: data.regions
+          .map((region) =>
+            t("sensitivity.regionLabel", {
+              start: region.cost_weight_start.toFixed(2),
+              end: region.cost_weight_end.toFixed(2),
+              path: region.route.path.join(" → "),
+              networks: routeNetworks(region.route),
+            })
           )
-          .join("; ")
+          .join("; "),
+      })
     );
     data.regions.forEach((region) => {
       const slot = slotOf(region);
@@ -1417,18 +1698,21 @@
       );
       segment.style.width = `${share}%`;
       segment.style.background = slotColor(slot.index);
-      segment.title =
-        `${region.route.path.join(" → ")} · ${routeNetworks(region.route)} · cost weight ` +
-        `${region.cost_weight_start.toFixed(2)}–${region.cost_weight_end.toFixed(2)}`;
+      segment.title = t("sensitivity.segmentTitle", {
+        path: region.route.path.join(" → "),
+        networks: routeNetworks(region.route),
+        start: region.cost_weight_start.toFixed(2),
+        end: region.cost_weight_end.toFixed(2),
+      });
       strip.append(segment);
     });
     strip.append(el("span", "regime-marker"));
     wrap.append(strip);
 
     const axis = el("div", "regime-axis");
-    axis.append(el("span", "", "0 · fastest"));
-    axis.append(el("span", "", "0.5 · balanced"));
-    axis.append(el("span", "", "1 · cheapest"));
+    axis.append(el("span", "", t("sensitivity.axisFastest")));
+    axis.append(el("span", "", t("sensitivity.axisBalanced")));
+    axis.append(el("span", "", t("sensitivity.axisCheapest")));
     wrap.append(axis);
 
     const legend = el("div", "regime-legend");
@@ -1442,9 +1726,11 @@
         el(
           "span",
           "legend-meta",
-          `${routeNetworks(slot.route)} · ` +
-            `fee $${fmtNumber(slot.route.total_fee_usd)} · ` +
-            `eta ${humanizeHours(slot.route.total_time_hours)}`
+          t("sensitivity.legendMeta", {
+            networks: routeNetworks(slot.route),
+            fee: `$${fmtNumber(slot.route.total_fee_usd)}`,
+            time: humanizeHours(slot.route.total_time_hours),
+          })
         )
       );
       legend.append(row);
@@ -1454,10 +1740,8 @@
 
     // Timing ranges from the per-hop bounds model.
     const rangeHeader = el("div", "panel-header");
-    rangeHeader.append(el("h2", "", "Timing ranges"));
-    rangeHeader.append(
-      el("span", "hint", "Registered per-hop bounds aggregated along each route")
-    );
+    rangeHeader.append(el("h2", "", t("sensitivity.timingTitle")));
+    rangeHeader.append(el("span", "hint", t("sensitivity.timingHint")));
     panel.append(rangeHeader);
     const rows = el("div", "range-rows");
     const globalMax = Math.max(
@@ -1491,16 +1775,18 @@
           "range-value",
           min === max
             ? humanizeHours(route.total_time_hours)
-            : `${humanizeHours(route.total_time_min_hours)} – ` +
-              `${humanizeHours(route.total_time_max_hours)}` +
-              ` · point ${humanizeHours(route.total_time_hours)}`
+            : t("sensitivity.rangeValue", {
+                min: humanizeHours(route.total_time_min_hours),
+                max: humanizeHours(route.total_time_max_hours),
+                point: humanizeHours(route.total_time_hours),
+              })
         )
       );
       rows.append(row);
     });
     panel.append(rows);
 
-    if (data.caveats && data.caveats.length > 0) panel.append(caveatRows(data.caveats));
+    if (data.caveats && data.caveats.length > 0) panel.append(caveatRows(data));
 
     const nodes = [panel];
     const meta = quotesMetaNode(data.quotes);
@@ -1508,25 +1794,21 @@
     if (data.balanced_region) {
       const note = el("div", "tradeoff-note");
       const body = el("div");
-      body.append(el("strong", "", "Stability "));
+      body.append(el("strong", "", t("sensitivity.stabilityTitle")));
       body.append(
         document.createTextNode(
-          `The balanced (0.50) choice — ${data.balanced_region.route.path.join(" → ")} via ` +
-            `${routeNetworks(data.balanced_region.route)} — holds for cost weights ` +
-            `${data.balanced_region.cost_weight_start.toFixed(2)}` +
-            `–${data.balanced_region.cost_weight_end.toFixed(2)}.`
+          t("sensitivity.stability", {
+            path: data.balanced_region.route.path.join(" → "),
+            networks: routeNetworks(data.balanced_region.route),
+            start: data.balanced_region.cost_weight_start.toFixed(2),
+            end: data.balanced_region.cost_weight_end.toFixed(2),
+          })
         )
       );
       note.append(svg(ICONS.note), body);
       nodes.push(note);
     }
     resultsBox.replaceChildren(...nodes);
-  }
-
-  function caveatRows(caveats) {
-    const rows = el("div", "caveat-rows");
-    caveats.forEach((caveat) => rows.append(el("div", "", `⚠ ${caveat}`)));
-    return rows;
   }
 
   /* ---------- comparison rendering ---------- */
@@ -1536,14 +1818,14 @@
     const heading = el("div", "compare-date");
     heading.append(document.createTextNode(side.rate_date || side.label));
     if (side.resolved_to_earlier_publication) {
-      heading.append(el("span", "resolved", `asked ${side.requested_date}`));
+      heading.append(el("span", "resolved", t("compare.asked", { date: side.requested_date })));
     }
     card.append(heading);
 
     const rows = el("div", "compare-rows");
-    const addRow = (label, valueNode) => {
+    const addRow = (key, valueNode) => {
       const row = el("div");
-      row.append(el("span", "label", label));
+      row.append(el("span", "label", t(key)));
       const value = el("span", "value");
       value.append(valueNode);
       row.append(value);
@@ -1551,24 +1833,23 @@
     };
 
     const route = side.route;
-    addRow("Mid-rate", document.createTextNode(side.mid_rate ? fmtRate(side.mid_rate) : "—"));
-    addRow("Route", pathFragment(route.path, "compare-path"));
-    addRow("Networks", document.createTextNode(routeNetworks(route)));
-    addRow("Fee", document.createTextNode(`$${fmtNumber(route.total_fee_usd)}`));
-    addRow("ETA", document.createTextNode(humanizeHours(route.total_time_hours)));
-    addRow("Recipient gets", document.createTextNode(fmtMoney(route.final_amount, target)));
+    addRow("compare.midRate", document.createTextNode(side.mid_rate ? fmtRate(side.mid_rate) : "—"));
+    addRow("compare.route", pathFragment(route.path, "compare-path"));
+    addRow("compare.networks", document.createTextNode(routeNetworks(route)));
+    addRow("compare.fee", document.createTextNode(`$${fmtNumber(route.total_fee_usd)}`));
+    addRow("compare.eta", document.createTextNode(humanizeHours(route.total_time_hours)));
+    addRow("compare.recipient", document.createTextNode(fmtMoney(route.final_amount, target)));
     card.append(rows);
     return card;
   }
 
   function renderComparison(data) {
     const target = data.request.target;
-    const profile = PROFILE_LABELS[data.request.profile] || "Balanced";
     const panel = el("section", "panel");
     const header = el("div", "panel-header");
-    header.append(el("h2", "", "Rate-date comparison"));
+    header.append(el("h2", "", t("compare.title")));
     header.append(
-      el("span", "hint", `${profile} profile · same rails, only the ECB fixing differs`)
+      el("span", "hint", t("compare.hint", { profile: profileLabel(data.request.profile) }))
     );
     panel.append(header);
 
@@ -1578,36 +1859,33 @@
     panel.append(grid);
 
     const deltas = el("div", "delta-rows");
-    const addDelta = (label, text) => {
+    const addDelta = (key, text) => {
       const row = el("div");
-      row.append(el("span", "label", label));
+      row.append(el("span", "label", t(key)));
       row.append(el("span", "value", text));
       deltas.append(row);
     };
+    const hours = Number.parseFloat(data.deltas.time_hours);
+    addDelta("compare.midRateChange", data.deltas.mid_rate ? fmtSigned(data.deltas.mid_rate) : "—");
+    addDelta("compare.feeChange", data.deltas.fee_usd ? `${fmtSigned(data.deltas.fee_usd)} USD` : "—");
     addDelta(
-      "Mid-rate change",
-      data.deltas.mid_rate ? fmtSigned(data.deltas.mid_rate) : "—"
-    );
-    addDelta("Fee change", data.deltas.fee_usd ? `${fmtSigned(data.deltas.fee_usd)} USD` : "—");
-    addDelta(
-      "ETA change",
-      data.deltas.time_hours
-        ? Number.parseFloat(data.deltas.time_hours) === 0
-          ? "no change"
-          : `${Number.parseFloat(data.deltas.time_hours) > 0 ? "+" : "-"}` +
-            humanizeHours(Math.abs(Number.parseFloat(data.deltas.time_hours)))
-        : "—"
+      "compare.etaChange",
+      !Number.isFinite(hours)
+        ? "—"
+        : hours === 0
+          ? t("compare.noChange")
+          : `${hours > 0 ? "+" : "-"}${humanizeHours(Math.abs(hours))}`
     );
     addDelta(
-      "Recipient gets",
+      "compare.recipient",
       data.deltas.receive ? `${fmtSigned(data.deltas.receive)} ${target}` : "—"
     );
     if (data.deltas.route_changed) {
-      addDelta("Winning route", "differs between the two dates");
+      addDelta("compare.winningRoute", t("compare.routeDiffers"));
     }
     panel.append(deltas);
 
-    if (data.caveats && data.caveats.length > 0) panel.append(caveatRows(data.caveats));
+    if (data.caveats && data.caveats.length > 0) panel.append(caveatRows(data));
 
     resultsBox.replaceChildren(panel);
   }
@@ -1663,23 +1941,23 @@
     const max = Number.parseFloat(data.request.max_amount);
     const toRatio = logPosition(min, max);
     const toPercent = (value) => toRatio(Number.parseFloat(value)) * 100;
-    const profile = PROFILE_LABELS[data.request.profile] || "Balanced";
 
     const slots = new Map();
     data.regions.forEach((region) => {
       const key = routeKey(region.route);
       if (!slots.has(key)) slots.set(key, slots.size);
     });
-    const routeText = (route) => `${route.path.join(" → ")} via ${routeNetworks(route)}`;
+    const routeText = (route) =>
+      t("breakeven.routeVia", { path: route.path.join(" → "), networks: routeNetworks(route) });
 
     const panel = el("section", "panel");
     const header = el("div", "panel-header");
-    header.append(el("h2", "", "Break-even by amount"));
+    header.append(el("h2", "", t("breakeven.title")));
     header.append(
       el(
         "span",
         "hint",
-        `${profile} profile · which route wins at which size · ${data.builds} quote rounds`
+        t("breakeven.hint", { profile: profileLabel(data.request.profile), builds: data.builds })
       )
     );
     panel.append(header);
@@ -1690,14 +1968,17 @@
     strip.setAttribute("role", "img");
     strip.setAttribute(
       "aria-label",
-      "Winning route by amount sent: " +
-        data.regions
-          .map(
-            (region) =>
-              `${fmtMoney(region.amount_start, source)} to ${fmtMoney(region.amount_end, source)}, ` +
-              routeText(region.route)
+      t("breakeven.stripLabel", {
+        regions: data.regions
+          .map((region) =>
+            t("breakeven.regionLabel", {
+              start: fmtMoney(region.amount_start, source),
+              end: fmtMoney(region.amount_end, source),
+              route: routeText(region.route),
+            })
           )
-          .join("; ")
+          .join("; "),
+      })
     );
     data.regions.forEach((region) => {
       const start = toPercent(region.amount_start);
@@ -1722,7 +2003,7 @@
     wrap.append(frame);
 
     wrap.append(axisTicks(amountTicks(min, max), (value) => toRatio(value) * 100));
-    wrap.append(el("div", "axis-caption", `Amount sent (${source}, logarithmic scale)`));
+    wrap.append(el("div", "axis-caption", t("breakeven.axis", { currency: source })));
 
     const legend = el("div", "regime-legend");
     const covered = data.regions.reduce(
@@ -1748,8 +2029,8 @@
     if (covered < 99.5) {
       const row = el("div", "legend-row");
       row.append(el("span", "dot no-route-swatch"));
-      row.append(el("span", "legend-path", "No route observed"));
-      row.append(el("span", "legend-meta", "never filled in from neighbouring samples"));
+      row.append(el("span", "legend-path", t("breakeven.noRoute")));
+      row.append(el("span", "legend-meta", t("breakeven.noRouteMeta")));
       legend.append(row);
     }
     wrap.append(legend);
@@ -1783,7 +2064,7 @@
       panel.append(rows);
     }
 
-    if (data.caveats && data.caveats.length > 0) panel.append(caveatRows(data.caveats));
+    if (data.caveats && data.caveats.length > 0) panel.append(caveatRows(data));
 
     resultsBox.replaceChildren(panel);
 
@@ -1793,21 +2074,21 @@
       const inRange = parsed !== null && parsed.value >= min && parsed.value <= max;
       marker.hidden = !(sameCurrency && inRange);
       if (!sameCurrency) {
-        note.textContent = `This scan is in ${source}; switch the source currency back to place your amount on it.`;
+        note.textContent = t("breakeven.noteCurrency", { currency: source });
         return;
       }
       if (!parsed) {
-        note.textContent = "Enter an amount to see where it falls on this scan.";
+        note.textContent = t("breakeven.noteNoAmount");
         return;
       }
-      const amountText = `${fmtAmountLabel(parsed.value)} ${source}`;
+      const amount = `${fmtAmountLabel(parsed.value)} ${source}`;
       if (!inRange) {
-        note.textContent = `Your amount (${amountText}) is outside the scanned range; widen the scan range to include it.`;
+        note.textContent = t("breakeven.noteOutside", { amount });
         return;
       }
       const percent = toRatio(parsed.value) * 100;
       marker.style.left = `${percent}%`;
-      markerLabel.textContent = `Your amount · ${fmtCompact(parsed.value)}`;
+      markerLabel.textContent = t("marker.yourAmount", { amount: fmtCompact(parsed.value) });
       placeLabel(markerLabel, percent);
       const bracket = (data.crossovers || []).find(
         (crossover) =>
@@ -1815,9 +2096,11 @@
           parsed.value <= Number.parseFloat(crossover.bracket_high)
       );
       if (bracket) {
-        note.textContent =
-          `Your amount (${amountText}) falls inside the ${bracket.below.networks.join(", ")} → ` +
-          `${bracket.above.networks.join(", ")} crossover bracket, so either route may win there.`;
+        note.textContent = t("breakeven.noteBracket", {
+          amount,
+          below: bracket.below.networks.join(", "),
+          above: bracket.above.networks.join(", "),
+        });
         return;
       }
       const region = data.regions.find(
@@ -1826,8 +2109,8 @@
           parsed.value <= Number.parseFloat(candidate.amount_end)
       );
       note.textContent = region
-        ? `At your amount (${amountText}), ${routeText(region.route)} wins in this scan.`
-        : `Your amount (${amountText}) falls in a gap this scan could not route, so it cannot say which route wins there.`;
+        ? t("breakeven.noteWinner", { amount, route: routeText(region.route) })
+        : t("breakeven.noteGap", { amount });
     };
   }
 
@@ -1849,27 +2132,28 @@
       ((toRatio(value) * (columnCount - 1) + 0.5) / columnCount) * 100;
     const rowPercent = (weight) =>
       ((rowCount - 1 - weight * (rowCount - 1) + 0.5) / rowCount) * 100;
+    const winnerText = (winner) =>
+      t("breakeven.routeVia", {
+        path: winner.signature.path.join(" → "),
+        networks: [...new Set(winner.signature.networks)].join(", "),
+      });
 
     const panel = el("section", "panel");
     const header = el("div", "panel-header");
-    header.append(el("h2", "", "Regime map"));
+    header.append(el("h2", "", t("regime.title")));
     header.append(
-      el(
-        "span",
-        "hint",
-        `${data.builds} graph builds · ${data.amounts.length} amount columns · sampled cells only`
-      )
+      el("span", "hint", t("regime.hint", { builds: data.builds, columns: columnCount }))
     );
     panel.append(header);
 
     const wrap = el("div", "regime-map-wrap");
     const layout = el("div", "regime-map-layout");
-    layout.append(el("div", "regime-map-y-title", "Cost weight α"));
+    layout.append(el("div", "regime-map-y-title", t("regime.yTitle")));
 
     const yAxis = el("div", "regime-map-y-axis");
-    yAxis.append(el("span", "", "1 · cost"));
+    yAxis.append(el("span", "", t("regime.yCost")));
     yAxis.append(el("span", "", "0.5"));
-    yAxis.append(el("span", "", "0 · time"));
+    yAxis.append(el("span", "", t("regime.yTime")));
     layout.append(yAxis);
 
     const plot = el("div", "regime-map-plot");
@@ -1878,8 +2162,7 @@
     plot.setAttribute("role", "img");
     plot.setAttribute(
       "aria-label",
-      `Winning routes for ${data.request.source} to ${data.request.target} by amount and cost weight. ` +
-        "The connected regions list below describes the same map."
+      t("regime.plotLabel", { source: data.request.source, target: data.request.target })
     );
 
     for (let weightIndex = rowCount - 1; weightIndex >= 0; weightIndex -= 1) {
@@ -1888,17 +2171,18 @@
         const regionId = data.region_grid[weightIndex][amountIndex];
         const cell = el("span", `regime-map-cell${winnerId === null ? " no-route" : ""}`);
         if (winnerId !== null) {
-          const winner = winnerById.get(winnerId);
           cell.style.background = slotColor(winnerId);
-          cell.title =
-            `${fmtMoney(amount, source)} · cost weight ` +
-            `${weights[weightIndex].toFixed(2)} · ` +
-            `${winner.signature.path.join(" → ")} via ` +
-            `${winner.signature.networks.join(", ")} · region ${regionId + 1}`;
+          cell.title = t("regime.cellTitle", {
+            amount: fmtMoney(amount, source),
+            weight: weights[weightIndex].toFixed(2),
+            route: winnerText(winnerById.get(winnerId)),
+            region: regionId + 1,
+          });
         } else {
-          cell.title =
-            `${fmtMoney(amount, source)} · cost weight ` +
-            `${weights[weightIndex].toFixed(2)} · no route`;
+          cell.title = t("regime.cellNoRoute", {
+            amount: fmtMoney(amount, source),
+            weight: weights[weightIndex].toFixed(2),
+          });
         }
         plot.append(cell);
       });
@@ -1913,7 +2197,7 @@
 
     const xAxis = el("div", "regime-map-x-axis");
     xAxis.append(axisTicks(amountTicks(min, max), columnPercent));
-    xAxis.append(el("div", "axis-caption", `Amount sent (${source}, logarithmic scale)`));
+    xAxis.append(el("div", "axis-caption", t("breakeven.axis", { currency: source })));
     layout.append(xAxis);
     wrap.append(layout);
 
@@ -1924,13 +2208,7 @@
       swatch.style.background = slotColor(winner.id);
       row.append(swatch);
       row.append(el("span", "legend-path", winner.signature.path.join(" → ")));
-      row.append(
-        el(
-          "span",
-          "legend-meta",
-          [...new Set(winner.signature.networks)].join(", ")
-        )
-      );
+      row.append(el("span", "legend-meta", [...new Set(winner.signature.networks)].join(", ")));
       legend.append(row);
     });
     wrap.append(legend);
@@ -1940,10 +2218,8 @@
     panel.append(wrap);
 
     const regionsHeader = el("div", "panel-header");
-    regionsHeader.append(el("h2", "", "Connected regions"));
-    regionsHeader.append(
-      el("span", "hint", "Four-neighbour cells with the same route signature")
-    );
+    regionsHeader.append(el("h2", "", t("regime.regionsTitle")));
+    regionsHeader.append(el("span", "hint", t("regime.regionsHint")));
     panel.append(regionsHeader);
 
     const regionRows = el("div", "regime-region-rows");
@@ -1956,7 +2232,10 @@
       label.append(
         swatch,
         document.createTextNode(
-          `Region ${region.id + 1} · ${winner.signature.networks.join(", ")}`
+          t("regime.regionLabel", {
+            id: region.id + 1,
+            networks: winner.signature.networks.join(", "),
+          })
         )
       );
       row.append(label);
@@ -1964,18 +2243,20 @@
         el(
           "span",
           "regime-region-span",
-          `${fmtMoney(region.sampled_amount_start, source)}–` +
-            `${fmtMoney(region.sampled_amount_end, source)} · α ` +
-            `${region.sampled_cost_weight_start.toFixed(2)}–` +
-            `${region.sampled_cost_weight_end.toFixed(2)} · ` +
-            `${region.cell_count} cells`
+          t("regime.regionSpan", {
+            start: fmtMoney(region.sampled_amount_start, source),
+            end: fmtMoney(region.sampled_amount_end, source),
+            wstart: region.sampled_cost_weight_start.toFixed(2),
+            wend: region.sampled_cost_weight_end.toFixed(2),
+            cells: region.cell_count,
+          })
         )
       );
       regionRows.append(row);
     });
     panel.append(regionRows);
 
-    if (data.caveats && data.caveats.length > 0) panel.append(caveatRows(data.caveats));
+    if (data.caveats && data.caveats.length > 0) panel.append(caveatRows(data));
 
     resultsBox.replaceChildren(panel);
 
@@ -1988,16 +2269,16 @@
         node.hidden = !(sameCurrency && inRange);
       });
       if (!sameCurrency) {
-        note.textContent = `This map is in ${source}; switch the source currency back to place your scenario on it.`;
+        note.textContent = t("regime.noteCurrency", { currency: source });
         return;
       }
       if (!parsed) {
-        note.textContent = "Enter an amount to see where your scenario sits on this map.";
+        note.textContent = t("regime.noteNoAmount");
         return;
       }
-      const amountText = `${fmtAmountLabel(parsed.value)} ${source}`;
+      const amount = `${fmtAmountLabel(parsed.value)} ${source}`;
       if (!inRange) {
-        note.textContent = `Your amount (${amountText}) is outside the sampled range; widen the scan range to include it.`;
+        note.textContent = t("regime.noteOutside", { amount });
         return;
       }
       const x = columnPercent(parsed.value);
@@ -2009,9 +2290,9 @@
       // Describe the nearest observed cell rather than inventing a value
       // for the unsampled point between cells.
       let column = 0;
-      amounts.forEach((amount, index) => {
+      amounts.forEach((sample, index) => {
         if (
-          Math.abs(Math.log(amount / parsed.value)) <
+          Math.abs(Math.log(sample / parsed.value)) <
           Math.abs(Math.log(amounts[column] / parsed.value))
         ) {
           column = index;
@@ -2020,30 +2301,42 @@
       const row = Math.round(weight * (rowCount - 1));
       const winnerId = data.grid[row][column];
       const regionId = data.region_grid[row][column];
-      const profile = PROFILE_LABELS[current.profile] || "Balanced";
-      const cellText = `${fmtMoney(amounts[column], source)}, α ${weights[row].toFixed(2)}`;
-      if (winnerId === null) {
-        note.textContent = `Your scenario (${amountText}, ${profile.toLowerCase()}) is nearest the sampled cell at ${cellText}, where no route was found.`;
-        return;
-      }
-      const winner = winnerById.get(winnerId);
+      const cell = `${fmtMoney(amounts[column], source)}, α ${weights[row].toFixed(2)}`;
+      const profile = profileInline(current.profile);
       note.textContent =
-        `Your scenario (${amountText}, ${profile.toLowerCase()}) is nearest the sampled cell at ` +
-        `${cellText}: ${winner.signature.path.join(" → ")} via ` +
-        `${[...new Set(winner.signature.networks)].join(", ")} (region ${regionId + 1}).`;
+        winnerId === null
+          ? t("regime.noteNoRoute", { amount, profile, cell })
+          : t("regime.noteWinner", {
+              amount,
+              profile,
+              cell,
+              route: winnerText(winnerById.get(winnerId)),
+              region: regionId + 1,
+            });
     };
   }
 
   /* ---------- sources rendering ---------- */
 
   function renderSources(records) {
+    sourceRecords = records;
+    const nodes = [];
+    // Entries quote their evidence, so they stay in the language of the
+    // cited sources; the surrounding interface is translated.
+    const note = t("registry.originalNote");
+    if (note) nodes.push(el("p", "registry-note", note));
     const wrap = el("div", "hop-table-wrap");
     const table = el("table", "data-table registry-table");
     const head = el("thead");
     const headRow = el("tr");
-    ["Evidence", "Network", "Metric & value", "Class", "Checked", "Reference"].forEach((label) => {
-      headRow.append(el("th", "", label));
-    });
+    [
+      "registry.evidence",
+      "registry.network",
+      "registry.metric",
+      "registry.class",
+      "registry.checked",
+      "registry.reference",
+    ].forEach((key) => headRow.append(el("th", "", t(key))));
     head.append(headRow);
     table.append(head);
 
@@ -2053,6 +2346,7 @@
       row.append(el("td", "", record.evidence_id));
       row.append(el("td", "", record.network));
       const metricCell = el("td");
+      metricCell.lang = "en";
       metricCell.append(document.createTextNode(`${record.metric}: ${record.value}`));
       metricCell.append(el("span", "caveat", record.caveat));
       row.append(metricCell);
@@ -2062,20 +2356,21 @@
       row.append(el("td", "num", record.checked_on));
       const referenceCell = el("td");
       if (record.reference) {
-        const link = el("a", "reference-link", "source ↗");
+        const link = el("a", "reference-link", t("registry.source"));
         link.href = record.reference;
         link.target = "_blank";
         link.rel = "noopener";
         referenceCell.append(link);
       } else {
-        referenceCell.append(el("span", "caveat", "assumption"));
+        referenceCell.append(el("span", "caveat", t("registry.assumption")));
       }
       row.append(referenceCell);
       body.append(row);
     });
     table.append(body);
     wrap.append(table);
-    sourcesBox.replaceChildren(wrap);
+    nodes.push(wrap);
+    sourcesBox.replaceChildren(...nodes);
   }
 
   /* ---------- AI insight ---------- */
@@ -2101,11 +2396,12 @@
     const response = await send("/api/explain", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ kind, data, lang: navigator.language || "en" }),
+      // The explanation follows the interface language, not the browser's.
+      body: JSON.stringify({ kind, data, lang }),
       signal,
     });
     if (!response.ok || !response.body) {
-      throw new Error(await errorDetail(response));
+      throw await responseError(response);
     }
 
     const reader = response.body.getReader();
@@ -2141,12 +2437,17 @@
           renderAiText(output, fullText, false);
           return { model: event.model };
         } else if (event.type === "error") {
-          throw new Error(event.message || "AI request failed.");
+          throw new Error(event.message || t("ai.failed"));
         }
       }
     }
     renderAiText(output, fullText, false);
     return { model: null };
+  }
+
+  function setAiButton(button, key) {
+    button.dataset.i18n = key;
+    button.textContent = t(key);
   }
 
   function appendAiPanel(kind, data, signal) {
@@ -2155,10 +2456,13 @@
 
     const head = el("div", "ai-head");
     const title = el("span", "ai-title");
-    title.append(svg(ICONS.sparkle), document.createTextNode("AI insight"));
+    const titleText = el("span", "", t("ai.title"));
+    titleText.dataset.i18n = "ai.title";
+    title.append(svg(ICONS.sparkle), titleText);
     head.append(title);
-    const button = el("button", "button button-ai", "Explain this result");
+    const button = el("button", "button button-ai");
     button.type = "button";
+    setAiButton(button, "ai.explain");
     head.append(button);
     panel.append(head);
 
@@ -2174,25 +2478,29 @@
 
     button.addEventListener("click", async () => {
       button.disabled = true;
-      button.replaceChildren(svg('<span class="spinner"></span>'), document.createTextNode(" Thinking…"));
+      button.dataset.busy = "true";
+      button.replaceChildren(
+        svg('<span class="spinner"></span>'),
+        document.createTextNode(` ${t("ai.thinking")}`)
+      );
       body.hidden = false;
       footer.hidden = true;
       output.replaceChildren(el("p", "", ""));
       output.firstChild.append(el("span", "ai-caret"));
       try {
         const result = await streamExplanation(kind, data, output, signal);
-        footer.textContent =
-          `Generated by ${result.model || "Claude"} from the simulated data above — ` +
-          "not live quotes, not financial advice.";
+        footer.dataset.i18n = "ai.footer";
+        footer.dataset.i18nParams = JSON.stringify({ model: result.model || "Claude" });
+        footer.textContent = t("ai.footer", { model: result.model || "Claude" });
         footer.hidden = false;
-        button.textContent = "Explain again";
+        delete button.dataset.busy;
+        setAiButton(button, "ai.again");
       } catch (error) {
+        delete button.dataset.busy;
         // Superseded by a new result: that result already replaced this panel.
         if (isAbort(error)) return;
-        output.replaceChildren(
-          el("p", "ai-error", error instanceof Error ? error.message : "AI request failed.")
-        );
-        button.textContent = "Retry";
+        output.replaceChildren(el("p", "ai-error", messageOf(error)));
+        setAiButton(button, "ai.retry");
       } finally {
         button.disabled = false;
       }
@@ -2224,16 +2532,16 @@
       const start = performance.now();
       const duration = 620;
       const step = (now) => {
-        const t = Math.min((now - start) / duration, 1);
-        const eased = 1 - (1 - t) ** 3;
+        const progress = Math.min((now - start) / duration, 1);
+        const eased = 1 - (1 - progress) ** 3;
         node.textContent =
           prefix +
-          (target * eased).toLocaleString("en-US", {
+          (target * eased).toLocaleString(numberLocale(), {
             minimumFractionDigits: decimals,
             maximumFractionDigits: decimals,
           }) +
           suffix;
-        if (t < 1) {
+        if (progress < 1) {
           requestAnimationFrame(step);
         } else {
           node.textContent = original;
@@ -2282,14 +2590,46 @@
     return { ...corridor, amount: request.amount };
   }
 
+  // Draws results from data already received. A language switch calls it
+  // again with the same data, keeping any AI explanation already on screen.
+  function drawResults(view, { preserveAi = false } = {}) {
+    const aiPanel = preserveAi ? resultsBox.querySelector(".ai-panel") : null;
+    scenarioMarkerUpdater = null;
+    RENDERERS[view.kind](view.data, view.request);
+    if (scenarioMarkerUpdater) scenarioMarkerUpdater(currentRequest());
+    if (aiPanel) {
+      applyTranslations(aiPanel);
+      resultsBox.append(aiPanel);
+    } else {
+      appendAiPanel(view.kind, view.data, viewController.signal);
+    }
+  }
+
+  function rerenderView() {
+    renderAlert();
+    if (shownWarnings) showWarnings(shownWarnings);
+    // A cancelled run is still `activeRun` until it unwinds; it no longer
+    // owns the view, so only a live run keeps the loading card.
+    if (activeRun && !activeRun.signal.aborted) {
+      showSkeleton(activeRun.kind);
+      const busyButton = actionButtons.find((button) => button.dataset.busy === "true");
+      if (busyButton) showBusyLabel(busyButton);
+      return;
+    }
+    if (currentView.type === "results") drawResults(currentView, { preserveAi: true });
+  }
+
   function snapshotView() {
     return {
       results: [...resultsBox.childNodes],
       alerts: [...alertsBox.childNodes],
       alertsHidden: alertsBox.hidden,
+      alertMessage,
       warnings: [...warningsBox.childNodes],
       warningsHidden: warningsBox.hidden,
+      shownWarnings,
       markerUpdater: scenarioMarkerUpdater,
+      lang,
     };
   }
 
@@ -2297,10 +2637,14 @@
     resultsBox.replaceChildren(...snapshot.results);
     alertsBox.replaceChildren(...snapshot.alerts);
     alertsBox.hidden = snapshot.alertsHidden;
+    alertMessage = snapshot.alertMessage;
     warningsBox.replaceChildren(...snapshot.warnings);
     warningsBox.hidden = snapshot.warningsHidden;
+    shownWarnings = snapshot.shownWarnings;
     scenarioMarkerUpdater = snapshot.markerUpdater;
-    if (scenarioMarkerUpdater) scenarioMarkerUpdater(currentRequest());
+    // The language may have changed while the request was running.
+    if (snapshot.lang !== lang) rerenderView();
+    else if (scenarioMarkerUpdater) scenarioMarkerUpdater(currentRequest());
   }
 
   // Called whenever the results on screen are replaced for good.
@@ -2318,30 +2662,28 @@
     const snapshot = activeRun && activeRun.snapshot ? activeRun.snapshot : snapshotView();
     const run = beginRun();
     run.snapshot = snapshot;
+    run.kind = kind;
     const signal = run.signal;
     clearFeedback();
     setResultsStale(false);
     setBusy(true, activeButton);
     showSkeleton(kind);
-    announceResults(
-      `${VIEW_LABELS[kind]} in progress. Results will update when the calculation finishes; press Escape to cancel.`
-    );
+    announceResults(t("announce.progress", { view: t(VIEW_KEYS[kind]) }));
     try {
       const data = await apiGet(ENDPOINTS[kind], paramsFor(kind, request), signal);
       // Route a late abort through the same path as one during the fetch.
       if (signal.aborted) throw new DOMException("Request aborted.", "AbortError");
       retireView();
       viewController = new AbortController();
+      currentView = { type: "results", kind, data, request: { ...request } };
       showWarnings(data.warnings);
-      RENDERERS[kind](data, request);
-      if (scenarioMarkerUpdater) scenarioMarkerUpdater(currentRequest());
-      appendAiPanel(kind, data, viewController.signal);
+      drawResults(currentView);
       decorateResults();
       lastSuccessfulRun = { kind, request: { ...request } };
       markResultsStale();
       saveRecent(kind, request);
       syncUrl(kind, request);
-      updateDocumentTitle(kind, request);
+      updateDocumentTitle();
       announceResults(completionMessage(kind, data));
       if (reveal) revealIfOffscreen(warningsBox.hidden ? resultsBox : warningsBox);
     } catch (error) {
@@ -2351,15 +2693,17 @@
         if (run.cancelledByUser) {
           restoreView(snapshot);
           markResultsStale();
-          announceResults("Request cancelled. The previous view is shown again.");
+          announceResults(t("announce.cancelled"));
         }
         return;
       }
       retireView();
+      currentView = { type: "error" };
       lastSuccessfulRun = null;
       setResultsStale(false);
       resultsBox.replaceChildren();
-      showError(error instanceof Error ? error.message : "Unexpected error.");
+      showError(() => messageOf(error));
+      updateDocumentTitle();
       if (reveal) revealIfOffscreen(alertsBox);
     } finally {
       // A superseded run must not re-enable the controls: the run that
@@ -2426,11 +2770,13 @@
       }
       clearFeedback();
       retireView();
+      currentView = { type: "empty" };
       lastSuccessfulRun = null;
       setResultsStale(false);
       resultsBox.replaceChildren(initialEmptyState);
-      updateDocumentTitle(null);
-      announceResults("Results cleared. Choose a corridor to run another simulation.");
+      applyTranslations(initialEmptyState);
+      updateDocumentTitle();
+      announceResults(t("announce.cleared"));
     }
   });
 
@@ -2438,6 +2784,7 @@
     const source = sourceSelect.value;
     sourceSelect.value = targetSelect.value;
     targetSelect.value = source;
+    renderQuickAmounts();
     updateScenarioSummary();
     markResultsStale();
   });
@@ -2459,56 +2806,66 @@
     );
     targetSelect.value =
       preferredTarget || currencies.find((code) => code !== sourceSelect.value) || currencies[0];
+    renderQuickAmounts();
     updateScenarioSummary();
   }
 
+  function renderMeta() {
+    if (!metaInfo) return;
+    const versionChip = $("#version-chip");
+    versionChip.textContent = `v${metaInfo.version}`;
+    versionChip.hidden = false;
+    const fx = metaInfo.fx;
+    if (fx) {
+      const label =
+        fx.mode === "live"
+          ? t(fx.stale ? "fx.liveCached" : "fx.live", { date: fx.rate_date })
+          : t(fx.fallback ? "fx.frozenFallback" : "fx.frozen");
+      // The top bar and the phone layout's disclaimer carry the same status.
+      [$("#fx-chip"), $("#disclaimer-fx")].forEach((chip) => {
+        chip.textContent = label;
+        // The detail is the server's own diagnostic, kept verbatim.
+        chip.title = fx.detail || "";
+        chip.classList.toggle("chip-warning", Boolean(fx.fallback));
+        chip.hidden = false;
+      });
+    }
+    if (metaInfo.disclaimer) $("#disclaimer").hidden = false;
+  }
+
   async function boot() {
-    renderRecents();
     // The backend rejects future dates; do not offer them in the picker.
     onDateInput.max = new Date().toISOString().slice(0, 10);
     const metaPromise = apiGet("/api/meta", {});
     const sourcesPromise = apiGet("/api/sources", {});
     try {
+      await Promise.all([loadCatalog("en"), loadCatalog(lang)]);
+    } catch {
+      // Without a catalog the markup's English text still stands.
+      lang = "en";
+    }
+    refreshLanguage();
+    try {
       const meta = await metaPromise;
+      metaInfo = meta;
       aiMeta = meta.ai || null;
+      quickAmountsByCurrency = meta.quick_amounts || {};
       populateCurrencies(meta.currencies);
       meta.networks.forEach((network) => networkSlot(network.name));
-      const versionChip = $("#version-chip");
-      versionChip.textContent = `v${meta.version}`;
-      versionChip.hidden = false;
-      if (meta.fx) {
-        const fxChip = $("#fx-chip");
-        fxChip.textContent =
-          meta.fx.mode === "live"
-            ? `FX · ECB ${meta.fx.rate_date}${meta.fx.stale ? " (cached)" : ""}`
-            : `FX · frozen table${meta.fx.fallback ? " (live unavailable)" : ""}`;
-        fxChip.title = meta.fx.detail || "";
-        if (meta.fx.fallback) fxChip.classList.add("chip-warning");
-        fxChip.hidden = false;
-      }
-      if (meta.disclaimer) {
-        $("#disclaimer-text").textContent = meta.disclaimer;
-        $("#disclaimer").hidden = false;
-      }
+      renderMeta();
       const urlRequest = requestFromUrl();
       if (urlRequest) {
         applyRequestToForm(urlRequest);
         runRequest(urlRequest.kind, buttonForKind(urlRequest.kind), { reveal: false });
       }
     } catch (error) {
-      showError(
-        error instanceof Error
-          ? `Could not load simulator metadata: ${error.message}`
-          : "Could not load simulator metadata."
-      );
+      showError(() => t("request.metaFailed", { message: messageOf(error) }));
     }
     try {
       const sources = await sourcesPromise;
       renderSources(sources.records);
     } catch {
-      sourcesBox.replaceChildren(
-        el("div", "empty-state", "The provenance registry could not be loaded.")
-      );
+      sourcesBox.replaceChildren(el("div", "empty-state", t("request.registryFailed")));
     }
   }
 

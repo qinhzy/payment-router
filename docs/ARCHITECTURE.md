@@ -156,6 +156,13 @@ bracket alongside the figure and says so, and it flags when the fees producing
 a crossing are scenario assumptions — in that case the boundary is a property
 of the model, not a measured market fact.
 
+Bisection can meet a third winner: a midpoint won by neither side of the
+bracket proves the interval holds at least two changes. Both halves are then
+located separately with the steps that remain, so each change is reported,
+and every midpoint observed on the way joins the samples a region is
+represented by. Otherwise the second change would be dropped and the third
+route's amounts labelled with the route that won at the next coarse sample.
+
 Regions are built only across runs of consecutive samples that routed. A
 sample with no route — below a fee floor, or where every provider failed —
 interrupts coverage: no region extends across it, the outer regions start and
@@ -258,6 +265,19 @@ always agree on routing behavior and error messages.
   successful builds are cached, responses expose `quoted_at`/`from_cache`
   metadata, and a TTL of zero disables the cache. The CLI always builds fresh.
 
+- The console's text lives in `web/static/i18n/en.json` and `zh-CN.json`.
+  Statements the backend makes are not translated by parsing prose: each
+  caveat is an `analysis.Caveat`, a `str` that also carries a stable code and
+  its parameters, and the JSON returns `caveat_codes` index-aligned with the
+  English `caveats`. Errors carry `code` and `params` beside the English
+  `detail`. The console renders a statement from its code when a translation
+  with every parameter exists and otherwise shows the backend's sentence, so
+  a translation can neither drift from which statement applies nor quote a
+  different figure. Tests keep both catalogs' keys and placeholders in step
+  and require a Chinese template for every registered caveat and error code.
+- `/api/meta` offers amount presets per currency: a USD ladder converted at
+  the active mid-rate and snapped to 1, 2, 2.5 or 5 times a power of ten.
+  They are input conveniences and are never presented as quotes.
 - `web/ai.py` is the optional AI layer: when Anthropic credentials resolve,
   `POST /api/explain` streams a Claude-generated reading of the displayed
   result over server-sent events. The prompt grounds the model strictly in
