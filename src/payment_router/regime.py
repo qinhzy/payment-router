@@ -116,7 +116,7 @@ async def analyze(
         raise ValueError("amounts must be greater than zero")
     if min_amount >= max_amount:
         raise RoutingRequestError(
-            "min_amount must be below max_amount",
+            f"The scan range's minimum ({min_amount}) must be below its maximum ({max_amount}).",
             code="range_order",
             min=min_amount,
             max=max_amount,

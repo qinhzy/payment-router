@@ -1723,14 +1723,17 @@
           .join("; "),
       })
     );
-    data.regions.forEach((region) => {
+    // A region lists the sampled weights it won, so neighbours sit one step
+    // apart. Each boundary is drawn midway between the two samples it
+    // separates, which fills the 0–1 axis; titles keep the sampled range.
+    let left = 0;
+    data.regions.forEach((region, index) => {
       const slot = slotOf(region);
       const segment = el("div", "regime-segment");
-      const share = Math.max(
-        (region.cost_weight_end - region.cost_weight_start) * 100,
-        0.8
-      );
-      segment.style.width = `${share}%`;
+      const next = data.regions[index + 1];
+      const right = next ? (region.cost_weight_end + next.cost_weight_start) / 2 : 1;
+      segment.style.width = `${Math.max((right - left) * 100, 0.8)}%`;
+      left = right;
       segment.style.background = slotColor(slot.index);
       segment.title = t("sensitivity.segmentTitle", {
         path: region.route.path.join(" → "),

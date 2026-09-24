@@ -255,6 +255,23 @@ def test_breakeven_uses_the_selected_profile_and_follows_the_entered_amount(
     assert page.locator("#results-context").is_visible()
 
 
+def test_sensitivity_regions_fill_the_weight_axis(page: Page, console_url: str) -> None:
+    # At 5,000 USD the flat fee is cheaper and the spread rail faster, so the
+    # winner changes along the weight axis.
+    page.goto(f"{console_url}/?from=USD&to=CNY&amount=5000&view=sensitivity")
+    _settle(page)
+
+    strip = page.locator(".regime-strip").first
+    segments = strip.locator(".regime-segment")
+    assert segments.count() == 2
+    # Regions list sampled weights a step apart; the strip must still span
+    # the axis instead of leaving that step empty at its right end.
+    covered = segments.evaluate_all(
+        "(parts) => parts.reduce((sum, part) => sum + part.getBoundingClientRect().width, 0)"
+    )
+    assert abs(covered - strip.evaluate("(node) => node.clientWidth")) <= 1
+
+
 def test_amounts_accept_grouping_but_reject_ambiguous_input(page: Page, console_url: str) -> None:
     page.goto(console_url)
     _ready(page)
