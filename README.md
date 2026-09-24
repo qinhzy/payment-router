@@ -61,8 +61,14 @@ into one sampled map and summarizes four-neighbour connected winner regions.
 `remit serve` starts a local web console at `http://127.0.0.1:8000` on top of
 the same routing engine the CLI uses:
 
-- corridor form with amount (thousands separators accepted), currency swap,
-  cheapest/fastest/balanced preference, and top-1/3/5 candidates;
+- an English and Simplified Chinese interface (中文界面). It follows the
+  browser language, can be switched from the top bar, and redraws the results
+  on screen without asking the server again. Analysis caveats and error
+  messages are translated from stable codes the API sends beside the English
+  sentence; the provenance registry keeps its evidence in the original English;
+- corridor form with amount (thousands separators accepted), round amount
+  presets sized to the source currency (2,000 CNY rather than 250), currency
+  swap, cheapest/fastest/balanced preference, and top-1/3/5 candidates;
 - a candidate comparison table for Top-3/Top-5 results (recipient amount and
   its difference to #1, fees, time, evidence), with each row jumping to its
   route card;
@@ -170,7 +176,8 @@ target: it adds no authentication, persistence, or payment initiation surface.
 - **Web console:** optional FastAPI backend plus a dependency-free single-page
   frontend sharing the CLI's routing service layer (`remit serve`).
 - **Quality:** Python 3.11-3.13 CI, strict pytest configuration, expanded Ruff
-  rules, package-build validation, and 311 automated tests.
+  rules, package-build validation, and 341 automated tests, including browser
+  tests of the web console.
 
 ## Quick start
 
@@ -188,6 +195,7 @@ uv run remit route USD CNY 100
 Run the full local verification suite:
 
 ```bash
+uv run playwright install chromium   # once; browser tests skip without it
 uv run pytest -x
 uv run ruff check .
 uv run ruff format --check .

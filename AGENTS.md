@@ -41,6 +41,7 @@
 - `fastapi` + `uvicorn` + `anthropic` 仅在可选 `web` extra 中，用于本地
   Web 控制台与可选 AI 解读
 - `pytest` + `pytest-httpx` 用于测试
+- `playwright`（仅开发依赖）用于 Web 控制台的浏览器端到端测试
 - `ruff` 用于 lint
 
 ## 目录约定
@@ -50,13 +51,14 @@
 - `src/payment_router/core/fx.py`：可插拔 FX 汇率源（冻结教学表 + ECB 实时快照）
 - `src/payment_router/core/graph.py`：从 networks 构造 `networkx` 图
 - `src/payment_router/router.py`：路由算法
-- `src/payment_router/analysis.py`：分析模块共享的路由签名
+- `src/payment_router/analysis.py`：分析模块共享的路由签名与可本地化的说明（`Caveat`）
 - `src/payment_router/regime.py`：金额 × 成本/时效权重二维区域扫描
 - `src/payment_router/service.py`：CLI 与 Web 共享的请求校验与路由会话服务层
 - `src/payment_router/provenance.py`：可审计的数据来源与假设注册表
 - `src/payment_router/visualizer.py`：Mermaid 输出与共享数字格式化
 - `src/payment_router/cli.py`：Typer CLI 入口
-- `src/payment_router/web/`：FastAPI 应用、JSON 序列化与静态前端资源
+- `src/payment_router/web/`：FastAPI 应用、JSON 序列化与静态前端资源；
+  `web/static/i18n/` 存放 `en` 与 `zh-CN` 界面文案目录
 - `tests/`：镜像 `src/` 的测试结构
 
 ## 数据诚信原则
@@ -82,6 +84,8 @@
 - 核心包不得引入新的运行时第三方依赖；Web 控制台依赖必须留在可选
   `web` extra 中；依赖范围以 `pyproject.toml` 为准
 - 前端静态资源必须自包含，不得引入 CDN 或外部请求
+- 控制台文案必须同时写入 `en.json` 与 `zh-CN.json`；新增说明模板或错误代码时
+  必须补齐中文模板且占位符一致；来源登记表条目保留英文原文
 
 ## 非目标
 

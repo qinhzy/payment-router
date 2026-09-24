@@ -32,7 +32,28 @@ All notable user-visible changes are recorded here. The project follows
   note names the nearest sampled cell rather than inventing a value between
   cells;
 - a Cancel button (and Esc) for a running request, which restores the previous
-  view, and decade tick labels on the logarithmic amount axes.
+  view, and decade tick labels on the logarithmic amount axes;
+- a Simplified Chinese console (中文界面) beside English. It follows the
+  browser language, is switched from the top bar and remembered, and redraws
+  the results on screen from the data already received. Caveats and errors are
+  translated from stable codes rather than by parsing prose: every caveat is an
+  `analysis.Caveat`, a `str` that also carries a code and its parameters, the
+  analysis JSON adds `caveat_codes` index-aligned with `caveats`, API errors add
+  `code` and `params` beside the unchanged English `detail`, and warnings add a
+  `code` for the simulator's own statements. When a translation lacks a figure
+  the server sent, the English sentence is shown instead. The provenance
+  registry keeps its evidence in the original English, which the console says;
+- amount presets sized to the source currency: `/api/meta` returns
+  `quick_amounts`, a USD ladder converted at the active mid-rate and snapped to
+  a round figure, so a CNY sender is offered 2,000–50,000 rather than 250;
+- browser tests of the console (`tests/web/test_console_e2e.py`, Playwright as
+  a development-only dependency) against a real server: hidden elements, the
+  candidate table, grouped warnings, the break-even profile and marker, amount
+  and field validation, Cancel, history navigation, quick amounts, language
+  switching, and the phone layout. They skip without Chromium unless
+  `PAYMENT_ROUTER_E2E=1`, which the CI job that installs Chromium sets; catalog
+  tests keep both languages' keys and placeholders in step and require a
+  Chinese template for every caveat and error code the backend can emit.
 
 ### Fixed
 
@@ -60,7 +81,18 @@ All notable user-visible changes are recorded here. The project follows
   before metadata loaded;
 - an AI explanation kept streaming in the background after new results
   replaced its panel, and a run that superseded another left "Working…" as a
-  button's permanent label.
+  button's permanent label;
+- break-even bisection that met a third winner inside one sampled interval
+  reported only the first change of winner and labelled the third route's
+  amounts with the route that won at the next coarse sample. Both halves are
+  now located separately, each change becomes its own crossover, and the
+  observed midpoints represent the regions they fall in;
+- sensitivity timing caveats named only the currency path, so two rails on the
+  same path printed the same warning twice. They now name the networks too;
+- the regime map's vertical axis title collapsed in Chinese: characters could
+  wrap between any two glyphs and, without a font's vertical metrics, stacked
+  on top of each other. It is kept on one line and set sideways in every
+  language.
 
 ### Changed
 
@@ -101,7 +133,12 @@ All notable user-visible changes are recorded here. The project follows
 - on phones the top bar stays one row, route flows run vertically, stat tiles
   use two columns, panel headers stack, and wide tables show scroll shadows;
   the recipient amount and its difference to #1 stay visible without
-  scrolling. Recent searches can be cleared.
+  scrolling. Recent searches can be cleared. The FX source moves from the top
+  bar into the disclaimer so the one-row bar has room for the language switch;
+- the CLI groups provider warnings by network and reason, like the console:
+  an unreachable provider is one row with a count and a sample of corridors
+  instead of one row per corridor;
+- AI explanations answer in the console's language rather than the browser's.
 
 ## [0.8.0] - Unreleased
 
