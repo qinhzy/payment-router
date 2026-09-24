@@ -46,6 +46,8 @@ All notable user-visible changes are recorded here. The project follows
 - amount presets sized to the source currency: `/api/meta` returns
   `quick_amounts`, a USD ladder converted at the active mid-rate and snapped to
   a round figure, so a CNY sender is offered 2,000–50,000 rather than 250;
+  on a phone too narrow for five full figures they read 2K or 1万 instead
+  of clipping the last preset;
 - browser tests of the console (`tests/web/test_console_e2e.py`, Playwright as
   a development-only dependency) against a real server: hidden elements, the
   candidate table, grouped warnings, the break-even profile and marker, amount

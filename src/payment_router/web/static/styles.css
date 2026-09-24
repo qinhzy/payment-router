@@ -451,6 +451,9 @@ main {
 }
 
 .quick-amounts > span {
+  /* The ladder is wider for CNY or HKD; the label must not be what gives. */
+  flex: none;
+  white-space: nowrap;
   margin-right: 2px;
   color: var(--ink-muted);
   font-size: 11px;
@@ -471,6 +474,15 @@ main {
   font-size: 11.5px;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
+}
+
+.quick-amounts .quick-compact,
+.quick-amounts.is-compact .quick-full {
+  display: none;
+}
+
+.quick-amounts.is-compact .quick-compact {
+  display: inline;
 }
 
 .quick-amounts button:hover,
@@ -2802,6 +2814,14 @@ footer {
   .analysis-buttons {
     display: grid;
     grid-template-columns: 1fr 1fr;
+  }
+
+  .quick-amounts {
+    gap: 3px;
+  }
+
+  .quick-amounts button {
+    padding-inline: 6px;
   }
 
   .range-field {

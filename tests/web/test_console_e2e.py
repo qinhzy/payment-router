@@ -366,4 +366,36 @@ def test_phone_layout_fits_the_screen(browser: Browser, console_url: str) -> Non
     brand = page.locator(".brand-name").bounding_box()
     actions = page.locator(".topbar-actions").bounding_box()
     assert brand["x"] + brand["width"] <= actions["x"], "the top bar must not overlap"
+
+    # The widest preset ladder still fits on one line beside its label, in
+    # either language.
+    page.select_option("#source-select", "CNY")
+    presets = page.locator("#quick-amounts")
+    for language in ("en", "zh-CN"):
+        if page.evaluate("document.documentElement.lang") != language:
+            page.click("#lang-toggle")
+            page.wait_for_function(f"document.documentElement.lang === '{language}'")
+        assert presets.evaluate("(row) => row.scrollWidth <= row.clientWidth"), language
+        label = presets.locator("span").first.bounding_box()
+        button = presets.locator("button").first.bounding_box()
+        assert label["height"] <= button["height"], f"the {language} preset label must not wrap"
+    page.context.close()
+
+
+def test_presets_shorten_rather_than_clip_on_a_narrow_phone(
+    browser: Browser, console_url: str
+) -> None:
+    page = _page(browser, width=320)
+    page.goto(f"{console_url}/?from=CNY&to=USD&amount=10000&profile=balanced&top_n=3")
+    _settle(page)
+    presets = page.locator("#quick-amounts")
+    first = presets.locator("button").first
+
+    assert presets.evaluate("(row) => row.scrollWidth <= row.clientWidth")
+    assert first.inner_text() == "2K"
+    assert first.get_attribute("data-quick-amount") == "2000"
+
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.wait_for_function("!document.querySelector('#quick-amounts.is-compact')")
+    assert first.inner_text() == "2,000"
     page.context.close()

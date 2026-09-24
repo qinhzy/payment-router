@@ -825,7 +825,11 @@
     const label = el("span", "", t("form.quick"));
     label.dataset.i18n = "form.quick";
     const buttons = ladder.map((value) => {
-      const button = el("button", "", fmtAmountLabel(value));
+      const button = el("button");
+      button.append(
+        el("span", "quick-full", fmtAmountLabel(value)),
+        el("span", "quick-compact", fmtCompact(value))
+      );
       button.type = "button";
       button.dataset.quickAmount = value;
       button.setAttribute("aria-pressed", "false");
@@ -833,7 +837,20 @@
       return button;
     });
     quickAmountsBox.replaceChildren(label, ...buttons);
+    fitQuickAmounts();
   }
+
+  // A narrow phone cannot always fit five full figures beside the label:
+  // there the ladder reads 2K or 1万 rather than clipping its last preset.
+  function fitQuickAmounts() {
+    quickAmountsBox.classList.remove("is-compact");
+    quickAmountsBox.classList.toggle(
+      "is-compact",
+      quickAmountsBox.scrollWidth > quickAmountsBox.clientWidth
+    );
+  }
+
+  new ResizeObserver(fitQuickAmounts).observe(quickAmountsBox);
 
   quickAmountsBox.addEventListener("click", (event) => {
     const button = event.target.closest("[data-quick-amount]");

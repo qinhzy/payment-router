@@ -277,7 +277,8 @@ always agree on routing behavior and error messages.
   and require a Chinese template for every registered caveat and error code.
 - `/api/meta` offers amount presets per currency: a USD ladder converted at
   the active mid-rate and snapped to 1, 2, 2.5 or 5 times a power of ten.
-  They are input conveniences and are never presented as quotes.
+  They are input conveniences and are never presented as quotes; the
+  console shortens them to 2K or 1万 only when the row cannot fit them.
 - `web/ai.py` is the optional AI layer: when Anthropic credentials resolve,
   `POST /api/explain` streams a Claude-generated reading of the displayed
   result over server-sent events. The prompt grounds the model strictly in
